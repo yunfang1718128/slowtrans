@@ -9,3 +9,5 @@ data/
 .pytest_cache/
 
 *.egg-info/
+pytest-of-*/
+.pytest_cache/
