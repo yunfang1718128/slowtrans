@@ -33,6 +33,8 @@ INLINE_KEEP = {
 }
 
 PH_RE = re.compile(r"\{\{\s*(\d+)\s*\}\}")
+# 只要还有真正的字母/汉字/假名就值得翻；只剩标点、数字、页码的索引条目跳过。
+WORD_RE = re.compile(r"[A-Za-z\u4e00-\u9fff\u3040-\u30ff]")
 BOUNDARY_RE = re.compile(r"(?<=[。．！？!?…])|(?<=[.])\s+(?=[A-Z\"“「『(])")
 
 
@@ -187,10 +189,10 @@ def segment_chapter(
             continue
         # 只有占位符、没有可译文字的块（图片、纯锚点）不入库：
         # 既不浪费 API 调用，也不会制造一堆"空译文"复核。
-        if not PH_RE.sub("", tpl).strip():
+        if not WORD_RE.search(PH_RE.sub("", tpl)):
             continue
         for si, chunk in enumerate(split_template(tpl, max_chars)):
-            if not PH_RE.sub("", chunk).strip():
+            if not WORD_RE.search(PH_RE.sub("", chunk)):
                 continue
             ids = {int(m.group(1)) for m in PH_RE.finditer(chunk)}
             cs.segments.append(
