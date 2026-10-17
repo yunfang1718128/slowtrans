@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slowtrans</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#d7dce6; --dim:#8b93a3; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.4px; }
+  header .sp { flex:1; }
+  input, button { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  main { padding:18px; display:grid; gap:18px; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  section > h2 { font-size:13px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-weight:600; display:flex; gap:8px; align-items:center;}
+  .body { padding:12px 14px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:500; }
+  tr.job { cursor:pointer; }
+  tr.job:hover { background:#1d222c; }
+  tr.sel { background:#1e2635; }
+  .bar { height:6px; background:#222836; border-radius:99px; overflow:hidden; min-width:80px; }
+  .bar > i { display:block; height:100%; background:var(--acc); }
+  .tag { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  code, pre { font-family: ui-monospace,Consolas,monospace; font-size:12px; }
+  pre { white-space:pre-wrap; word-break:break-all; margin:0; }
+  #events { max-height:320px; overflow:auto; }
+  .ev { padding:3px 0; border-bottom:1px dashed #1e2430; }
+  .ev b { color:var(--acc); font-weight:500; }
+  .empty { color:var(--dim); padding:8px 0; }
+  input.wide { width:100%; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>slowtrans</h1>
+  <span id="health" class="dim">连接中…</span>
+  <span class="sp"></span>
+  <input id="token" placeholder="Bearer token（可留空）" size="34">
+  <button id="save">保存</button>
+  <button id="refresh">刷新</button>
+</header>
+
+<main>
+  <div style="display:grid;gap:18px;align-content:start">
+    <section>
+      <h2>任务 <span id="jobcount" class="dim"></span></h2>
+      <div class="body" style="padding:0">
+        <table><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>引擎</th></tr></thead>
+        <tbody id="jobs"><tr><td colspan="4" class="empty">暂无任务</td></tr></tbody></table>
+      </div>
+    </section>
+
+    <section>
+      <h2>事件流</h2>
+      <div class="body" id="events"><div class="empty">等待事件…</div></div>
+    </section>
+  </div>
+
+  <div style="display:grid;gap:18px;align-content:start">
+    <section>
+      <h2>详情 <span id="jobid" class="dim"></span></h2>
+      <div class="body" id="detail"><div class="empty">点左侧任务查看</div></div>
+    </section>
+
+    <section>
+      <h2>术语表</h2>
+      <div class="body" id="glossary"><div class="empty">选中任务后加载</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let selected = null, timer = null, lastEventId = 0;
+
+function token() { return localStorage.getItem('slowtrans_token') || ''; }
+function headers() { const h = {'Content-Type':'application/json'}; const t = token(); if (t) h.Authorization = 'Bearer ' + t; return h; }
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, {...opt, headers: headers()});
+  if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
+}
+
+function pct(s) { return s.total ? Math.round(100 * s.done / s.total) : 0; }
+
+async function loadHealth() {
+  try { const h = await api('/api/v1/health'); $('#health').textContent = `v${h.version} · 队列 ${h.queue}`; $('#health').className = 'ok'; }
+  catch (e) { $('#health').textContent = '未连接：' + e.message; $('#health').className = 'bad'; }
+}
+
+async function loadJobs() {
+  const jobs = await api('/api/v1/jobs?limit=30');
+  $('#jobcount').textContent = `(${jobs.length})`;
+  if (!jobs.length) { $('#jobs').innerHTML = '<tr><td colspan="4" class="empty">暂无任务</td></tr>'; return; }
+  $('#jobs').innerHTML = jobs.map(j => {
+    const s = j.segments, p = pct(s);
+    const cls = j.state === 'done' ? 'ok' : (j.state === 'failed' ? 'bad' : 'warn');
+    return `<tr class="job ${j.job_id === selected ? 'sel' : ''}" data-id="${esc(j.job_id)}">
+      <td><code>${esc(j.job_id)}</code><br><span class="dim">${esc(j.src_path.split(/[\\/]/).pop())}</span></td>
+      <td class="${cls}">${esc(j.state)}</td>
+      <td><div class="bar"><i style="width:${p}%"></i></div><span class="dim">${s.done}/${s.total}${s.review ? ` · 待复核 ${s.review}` : ''}</span></td>
+      <td><span class="tag">${esc(j.engine)}</span></td></tr>`;
+  }).join('');
+  document.querySelectorAll('tr.job').forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));
+}
+
+async function selectJob(id) {
+  selected = id;
+  await loadJobs();
+  $('#jobid').textContent = id;
+  try {
+    const j = await api('/api/v1/jobs/' + id);
+    const s = j.segments;
+    const chapters = j.chapters.map(c => `<tr><td>${c.idx + 1}</td><td>${esc(c.title || c.href)}</td>
+      <td>${c.seg_done}/${c.seg_total}</td></tr>`).join('');
+    const review = (j.review || []).map(r => `<tr><td>${r.chapter_idx + 1}</td><td><code>${esc(r.src_text.slice(0, 60))}</code></td>
+      <td class="warn">${esc(r.error)}</td></tr>`).join('');
+    $('#detail').innerHTML = `
+      <div class="row"><span class="tag">${esc(j.engine)}</span><span class="tag">${esc(j.lang_from)} → ${esc(j.lang_to)}</span>
+        <span class="tag">tokens ${j.tokens.in}/${j.tokens.out}</span></div>
+      <div class="bar" style="height:10px"><i style="width:${pct(s)}%"></i></div>
+      <p class="dim">${s.done}/${s.total} 段 · 待复核 ${s.review} · 失败 ${s.failed} · ${pct(s)}%</p>
+      <div class="row">
+        <button data-act="resume">继续</button>
+        <button data-act="pause">暂停</button>
+        <button data-act="artifact">下载成品</button>
+      </div>
+      <details><summary class="dim">章节（${j.chapters.length}）</summary><table>${chapters}</table></details>
+      ${review ? `<details open><summary class="warn">待复核段落（${j.review.length}）</summary><table>${review}</table></details>` : ''}
+      ${j.error ? `<p class="bad">${esc(j.error)}</p>` : ''}`;
+    document.querySelectorAll('#detail button').forEach(b => b.onclick = () => act(b.dataset.act, id));
+    loadGlossary(id);
+  } catch (e) { $('#detail').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+
+async function act(a, id) {
+  if (a === 'artifact') { window.open('/api/v1/artifacts/' + id, '_blank'); return; }
+  try { await api(`/api/v1/jobs/${id}/${a}`, {method: 'POST'}); await selectJob(id); }
+  catch (e) { alert(e.message); }
+}
+
+async function loadGlossary(id) {
+  try {
+    const g = await api(`/api/v1/jobs/${id}/glossary`);
+    if (!g.terms.length) { $('#glossary').innerHTML = '<div class="empty">术语表为空（可能还没跑分析阶段）</div>'; return; }
+    $('#glossary').innerHTML = `<p class="dim">版本 ${g.version} · 共 ${g.terms.length} 条。改完点保存，只会重译命中旧译名的段落。</p>` +
+      g.terms.map(t => `<div class="row"><code>${esc(t.src)}</code>→<input class="wide" data-src="${esc(t.src)}" value="${esc(t.dst)}"></div>`).join('') +
+      `<button id="saveg">保存术语表</button>`;
+    $('#saveg').onclick = async () => {
+      const inputs = document.querySelectorAll('#glossary input');
+      for (const inp of inputs) {
+        await api(`/api/v1/jobs/${id}/glossary`, {method: 'PUT',
+          body: JSON.stringify({src: inp.dataset.src, dst: inp.value, locked: true})});
+      }
+      await loadGlossary(id);
+    };
+  } catch (e) { $('#glossary').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+
+function connectEvents() {
+  try {
+    const es = new EventSource('/api/v1/events' + (lastEventId ? '?last_id=' + lastEventId : ''));
+    es.onmessage = e => pushEvent(JSON.parse(e.data));
+    ['job.completed','job.failed','job.needs_review','progress','job.translating'].forEach(t =>
+      es.addEventListener(t, e => pushEvent(JSON.parse(e.data))));
+    es.onerror = () => { es.close(); setTimeout(connectEvents, 5000); };
+  } catch {}
+}
+
+function pushEvent(p) {
+  lastEventId = Math.max(lastEventId, p.seq || 0);
+  const box = $('#events');
+  if (box.querySelector('.empty')) box.innerHTML = '';
+  const d = p.data || {};
+  const extra = d.total ? ` ${d.done}/${d.total}` : (d.out ? ' ' + d.out : '');
+  box.insertAdjacentHTML('afterbegin', `<div class="ev"><span class="dim">${esc((p.ts || '').slice(11, 19))}</span>
+    <b>${esc(p.event)}</b> <span class="dim">${esc(p.job_id)}</span>${esc(extra)}</div>`);
+  while (box.children.length > 80) box.lastChild.remove();
+}
+
+$('#save').onclick = () => { localStorage.setItem('slowtrans_token', $('#token').value.trim()); refresh(); };
+$('#refresh').onclick = () => refresh();
+$('#token').value = token();
+
+async function refresh() {
+  await loadHealth();
+  try { await loadJobs(); } catch (e) { $('#jobs').innerHTML = `<tr><td colspan="4" class="bad">${esc(e.message)}</td></tr>`; }
+  if (selected) { try { await selectJob(selected); } catch {} }
+}
+
+refresh();
+connectEvents();
+timer = setInterval(refresh, 5000);
+</script>
+</body>
+</html>

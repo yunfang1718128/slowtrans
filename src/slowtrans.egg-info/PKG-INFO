@@ -1,0 +1,198 @@
+Metadata-Version: 2.4
+Name: slowtrans
+Version: 0.1.0
+Summary: Slow, cheap, resumable EPUB translation for low-memory servers
+Author: slowtrans contributors
+License: MIT
+Keywords: epub,translation,llm,low-memory,self-hosted
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: lxml>=5.0
+Provides-Extra: api
+Requires-Dist: fastapi>=0.110; extra == "api"
+Requires-Dist: uvicorn>=0.29; extra == "api"
+
+# slowtrans
+
+> 在 1.7 GB 内存的小服务器上，用免费/廉价 LLM API 慢慢把 EPUB 译成中文，可随时中断、改术语只重译受影响段落。
+
+`slowtrans` 不是又一个「一键翻译整本书」的脚本。它解决的是另外三个问题：
+
+1. **机器很弱**：常驻内存 100 MB 上下，单并发，不跟同机的机器人/网盘抢资源。
+2. **API 很便宜但很慢、会限流**：令牌桶、退避、熔断、预算、时间窗、batch 失败自动降级。
+3. **长文本译名会漂**：术语表 + 风格卡 + 前情摘要持久化在 SQLite 里，改术语只重译命中段。
+
+## 和现有项目的区别
+
+| 项目 | 定位 | slowtrans 的不同 |
+|---|---|---|
+| `bilingual_book_maker` | 一次性生成双语书 | 有服务端、状态机、断点续传、术语版本化 |
+| `TranslateBooksWithLLMs` | Web UI 跑一本书 | 不做 UI 重活，只暴露 HTTP，客户端可换 |
+| `epub-translator` | CLI 保持 epub 结构 | 结构与它同级，但多了「试译→审核→长跑」流程 |
+
+简单说：**它们假设「跑完就好」，slowtrans 假设「跑 8 小时、中途会停、术语会改」。**
+
+## 特性
+
+- **低内存**：逐章解析，译文只落 SQLite，最后才组装 zip；峰值内存只跟「一章」有关。
+- **可中断**：`kill -9` 后重跑自动续，已完成段落不重复付费。
+- **一致性**：术语表（只注入命中项）+ 风格卡 + 章节摘要；改术语后按缓存键选择性重译。
+- **慢速友好**：单并发、令牌桶、指数退避、熔断、预算上限、可设夜间时间窗。
+- **结构安全**：`mimetype` 第一且 STORE、内联标签用占位符保护、写完回读自检。
+- **双语对照**：默认输出「原文段 + 译文段」，可 `--mono` 只出译文。
+- **桥接优先**：REST + SSE，AstrBot 插件与面板共用同一套事件。
+
+## 快速开始
+
+```bash
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -e ".[api]"
+
+export SILICONFLOW_API_KEY=sk-...                  # 或写进 .env（已在 .gitignore）
+slowtrans inspect --src book.epub                  # 先看结构，不花钱
+slowtrans run --src book.epub --out book.zh.epub \
+  --from en --to zh-CN \
+  --engine siliconflow:Qwen/Qwen2.5-7B-Instruct \
+  --batch 4
+```
+
+跑之前建议先小规模验证：
+
+```bash
+slowtrans run --src book.epub --out test.epub --limit 40 --batch 4
+```
+
+`--limit` 只入库前 N 段。之后去掉 `--limit` 重跑会自动补齐剩余段。
+
+### 免费模型参考
+
+| provider | model | 备注 |
+|---|---|---|
+| siliconflow | `Qwen/Qwen2.5-7B-Instruct` | 中文表达自然，默认选择 |
+| siliconflow | `THUDM/GLM-4-9B-0414` | 占位符服从度好，语感略硬 |
+| siliconflow | `tencent/Hunyuan-MT-7B` | 最快、纯翻译模型，但会丢行内标记 |
+| zhipu | `glm-4-flash` | 备用通道，免费额度独立 |
+
+> 免费模型的可用性/额度随时会变。`--engine` 只是 `provider:model`，换模型不用改代码。
+> 引擎层统一走 OpenAI 兼容协议，任何兼容 endpoint（DeepSeek、百炼、Ollama、vLLM）都能直接用。
+
+## 它是怎么保证译名一致的
+
+一本书里同一个人名出现 200 次。如果每次翻译都靠模型「记住」，必然漂。
+
+slowtrans 的做法是**把约定变成持久化状态**：
+
+1. **分析阶段**（只跑一次，花费几毛钱）
+   - 本地统计候选专名（不花 API 钱）
+   - 一次批量调用让模型定名，写入 `glossary` 表
+   - 从开头几段生成 `style_card`（≤8 条硬规则）
+
+2. **翻译阶段**
+   - 每段只注入**命中该段**的术语（不是全表），通常 3–10 条
+   - 前面 2–3 章的摘要作为「前情」
+   - 严格按 spine 顺序串行，术语表随进度生长
+
+3. **校验阶段**
+   - 占位符集合必须一致（内联标签丢失 → 重试 → 降级去标记重译 → 仍失败则保留原文）
+   - 译文/原文长度比异常 → 判为漏译/截断
+
+4. **改术语之后**
+   ```bash
+   # 面板或 API 里改一个译名 -> glossary_version 变
+   slowtrans run --src book.epub --out book.zh.epub   # 只重译命中旧译名的段落
+   ```
+   缓存键包含 `glossary_version + style_version + prompt_version`，其余段落直接命中缓存。
+
+## 桥接 API
+
+服务只监听 `127.0.0.1`。远程访问请用 SSH 隧道或 Tailscale，不要直接暴露公网。
+
+```bash
+slowtrans serve --host 127.0.0.1 --port 8790
+# 浏览器打开 http://127.0.0.1:8790/  （内置只读面板）
+```
+
+```
+POST /api/v1/jobs                提交任务（type=translate|convert）
+GET  /api/v1/jobs?state=         任务列表
+GET  /api/v1/jobs/{id}           进度、章节、待复核段
+POST /api/v1/jobs/{id}/pause|resume|cancel
+GET  /api/v1/jobs/{id}/glossary  读术语表
+PUT  /api/v1/jobs/{id}/glossary  改译名（?replan 提示只重译命中段）
+GET  /api/v1/jobs/{id}/events    SSE，支持 Last-Event-ID 续传
+GET  /api/v1/events              全局事件流
+POST /api/v1/hooks               webhook 注册
+GET  /api/v1/artifacts/{id}      下载成品
+GET  /api/v1/health | /capabilities
+```
+
+**格式转换尚未实现**，接口已预留：
+
+```http
+POST /api/v1/jobs {"type":"convert", ...}
+HTTP/1.1 501 Not Implemented
+{"error":"not_implemented","feature":"convert","planned":["md","txt","html","docx","pdf(仅文本)"]}
+```
+
+事件格式是三个客户端唯一的共同契约：
+
+```json
+{"schema_version":1,"seq":42,"job_id":"j_ab12","event":"progress",
+ "ts":"2026-10-18T01:20:00Z",
+ "data":{"state":"translating","chapter":3,"chapter_total":12,
+         "done":112,"total":410,"tokens_in":18234,"tokens_out":9201}}
+```
+
+鉴权：设置 `SLOWTRANS_TOKEN` 后所有 `/api/v1/*`（除 `health`、`capabilities`、SSE）需要
+`Authorization: Bearer <token>`。不设则只有在回环地址上才安全。
+
+## 部署（systemd，低内存）
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin slowtrans
+sudo mkdir -p /srv/slowtrans /etc/slowtrans
+sudo install -m 600 deploy/env.example /etc/slowtrans/env   # 填入 key
+sudo install -m 644 deploy/slowtrans.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now slowtrans
+```
+
+unit 里已经限死：
+
+```ini
+MemoryHigh=280M
+MemoryMax=320M
+CPUQuota=80%
+Nice=10
+```
+
+## 实测
+
+（见 `docs/benchmark.md`，每次跑样书都会更新）
+
+## 已知限制
+
+- 图片里的文字不翻译。
+- DRM 书无法处理，会直接报错，不会产出坏文件。
+- PDF 转 EPUB 尚未实现；将来也只保证文本，不保证版式/公式/图表。
+- 免费小模型偶尔丢行内标记：会先重试，再降级为「去标记重译」，最后保留原文并标 `review`。
+- 日文 `ruby` 注音默认丢弃（中文读者不需要），竖排样式会强制改为横排。
+
+## Roadmap
+
+- [x] epub 分段/重写/自检
+- [x] 术语表 + 风格卡 + 缓存版本化
+- [x] 断点续传、预算、退避、熔断
+- [x] REST + SSE 桥接
+- [x] 内置面板
+- [x] AstrBot 插件
+- [ ] 半自动审核（`awaiting_review` 状态）
+- [ ] 格式转换：md/txt/html/docx → epub（同一 job 队列）
+- [ ] 一致性自动巡检（译名漂移扫描）
+- [ ] 英文 README / Dockerfile / PyPI
+
+## 许可证
+
+MIT。参考了 `bilingual_book_maker`、`epub-translator`、`TranslateBooksWithLLMs` 的思路，
+但未复制其代码；后者的 AGPL 代码请不要直接粘进来。

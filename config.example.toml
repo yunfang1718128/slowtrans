@@ -1,0 +1,47 @@
+# slowtrans 配置示例。复制为 config.toml 后按需修改。
+# 命令行参数优先于本文件（--batch / --timeout 等）。
+
+[engine]
+provider = "siliconflow"
+model = "Qwen/Qwen2.5-7B-Instruct"
+batch_size = 4              # 一次请求翻几段；小模型建议 3-4
+temperature = 0.3
+max_output_tokens = 3072
+request_timeout_s = 90      # 免费模型偶尔排队，超时短一点 + 重试比长等更好
+
+[scheduler]
+concurrency = 1             # 2 核机器上并发没有收益，还会破坏术语一致性
+rps = 0.0                   # 0=不限速。慢速部署可设 0.3
+max_retries = 4
+backoff_base_s = 5
+backoff_max_s = 300
+breaker_failures = 8
+breaker_cooldown_s = 600
+budget_cny = 0.0            # 0=不限。设定后到点自动 pause
+window = ""                 # 例 "00:00-08:00"，窗口外自动暂停
+
+[epub]
+bilingual = true            # false = 只输出译文
+max_segment_chars = 1200    # 单段硬上限，超长段落按句切分
+strip_ruby_rt = true        # 日文注音丢弃
+force_horizontal = true     # 强制横排（覆盖 vertical-rl）
+
+[paths]
+data_dir = "data"           # SQLite + 成品目录
+
+[providers.siliconflow]
+base_url = "https://api.siliconflow.cn/v1"
+api_key_env = "SILICONFLOW_API_KEY"
+
+[providers.zhipu]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "ZHIPU_API_KEY"
+
+# 任何 OpenAI 兼容服务都能加：
+# [providers.deepseek]
+# base_url = "https://api.deepseek.com/v1"
+# api_key_env = "DEEPSEEK_API_KEY"
+#
+# [providers.ollama]
+# base_url = "http://127.0.0.1:11434/v1"
+# api_key_env = "OLLAMA_API_KEY"    # 随便填一个非空值

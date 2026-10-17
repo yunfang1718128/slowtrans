@@ -1,0 +1,17 @@
+{
+  "api_base": {
+    "type": "string",
+    "default": "http://127.0.0.1:8790",
+    "description": "slowtrans 服务地址。插件和 Bot 同机，直接走回环，不要填公网 IP。"
+  },
+  "token": {
+    "type": "string",
+    "default": "",
+    "description": "与服务器 /etc/slowtrans/env 里的 SLOWTRANS_TOKEN 一致；留空表示服务未启用鉴权。"
+  },
+  "poll_seconds": {
+    "type": "int",
+    "default": 30,
+    "description": "完成检测轮询间隔（秒）。免费 API 跑得慢，30 秒足够，不要设太小。"
+  }
+}

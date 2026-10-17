@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.eval/
+data/
+*.epub
+!tests/fixtures/*.epub
+.pytest_cache/

@@ -1,0 +1,5 @@
+name: astrbot_plugin_slowtrans
+desc: 慢速 EPUB 翻译桥接：提交任务、查询进度、完成后推送
+version: 0.1.0
+author: slowtrans
+repo: https://github.com/your-name/slowtrans
