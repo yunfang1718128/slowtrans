@@ -5,9 +5,7 @@
 """
 from __future__ import annotations
 
-import re
-
-PROMPT_VERSION = "translate-v1"
+PROMPT_VERSION = "translate-v2"
 
 SYSTEM_TRANSLATE = """你是资深译者，负责把书稿翻译成{target}。读者是普通成年读者。
 
@@ -36,8 +34,6 @@ SYSTEM_STYLE_CARD = """你是资深图书编辑。读下面这本书开头几段
 SYSTEM_SUMMARY = """用两三句中文概括这一章发生了什么、涉及哪些人物或概念。
 只输出概括，不要评价，不要分点。"""
 
-_PH = re.compile(r"\{\{(\d+)\}\}")
-
 
 def build_user_prompt(
     items: list[tuple[int, str]],
@@ -59,12 +55,9 @@ def build_user_prompt(
         parts.append("【术语表】\n" + lines)
     parts.append("【原文】")
     for no, text in items:
-        # 把该段必须保留的占位符单独列出来：小模型对长段中间的 {{n}} 最容易丢
-        phs = sorted({m.group(1) for m in _PH.finditer(text)}, key=int)
-        hint = ""
-        if phs:
-            hint = "（本段必须保留：" + " ".join(f"{{{{{p}}}}}" for p in phs) + "）"
-        parts.append(f"<<<{no}>>>{hint}\n{text}")
+        # 不要在段内加注释：翻译专用模型会把“（本段必须保留…）”当成正文一起译。
+        # 占位符约束只靠 system prompt + affix 剥离 + 降级重译。
+        parts.append(f"<<<{no}>>>\n{text}")
     parts.append(
         "【输出】按相同编号输出译文，格式为 <<<1>>> 译文（换行）<<<2>>> 译文。"
         "不要输出任何其它内容。"

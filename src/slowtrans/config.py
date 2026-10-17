@@ -14,16 +14,16 @@ from typing import Any
 DEFAULT_CONFIG = """
 [engine]
 provider = "siliconflow"
-model = "THUDM/GLM-4-9B-0414"
+model = "Qwen/Qwen2.5-7B-Instruct"
 batch_size = 4
 temperature = 0.3
 max_output_tokens = 3072
-request_timeout_s = 90
+request_timeout_s = 60
 
 [scheduler]
 concurrency = 1
 rps = 0.0            # 0 = 不限速；慢速部署可设 0.5
-max_retries = 4
+max_retries = 3
 backoff_base_s = 5
 backoff_max_s = 300
 breaker_failures = 8

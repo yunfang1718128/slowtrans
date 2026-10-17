@@ -140,24 +140,36 @@ class Pipeline:
         if not self.opts.analyze:
             return
         self.db.set_state(self.jid, "analyzing")
+        # 分析阶段必须幂等：术语已经定过名就绝不能再让模型重定一遍，
+        # 否则同一本书重跑会出现两套译名，比不跑还糟。
+        existing_terms = self.db.glossary(self.jid)
+        if existing_terms:
+            self.stats.glossary_terms = len(existing_terms)
+            self.log(f"术语表已存在（{len(existing_terms)} 条），跳过定名")
+        else:
+            rows = self.db.all_segments(self.jid)
+            texts = [r["src_text"] for r in rows]
+            candidates = extract_candidates(texts, self.opts.lang_from)
+            self.log(f"术语候选 {len(candidates)} 个，正在让模型定名……")
+            if candidates:
+                try:
+                    raw = self.engine.complete(
+                        prompts.SYSTEM_EXTRACT_TERMS,
+                        prompts.extract_terms_prompt(candidates),
+                        max_tokens=1500,
+                    )
+                    for src, dst in _parse_terms(raw):
+                        self.db.put_glossary(self.jid, src, dst, kind="term", locked=True)
+                except Exception as exc:
+                    self.log(f"  ! 术语定名失败，降级为不加术语表：{exc}")
+            self.stats.glossary_terms = len(self.db.glossary(self.jid))
+            self.log(f"术语表 {self.stats.glossary_terms} 条")
+
+        if self.db.style_card(self.jid)[1]:
+            self.log(f"风格卡已存在（v{self.db.style_card(self.jid)[1]}），跳过生成")
+            return
         rows = self.db.all_segments(self.jid)
-        texts = [r["src_text"] for r in rows]
-        sample = "\n".join(texts[:400])
-        candidates = extract_candidates(texts, self.opts.lang_from)
-        self.log(f"术语候选 {len(candidates)} 个，正在让模型定名……")
-
-        if candidates:
-            try:
-                raw = self.engine.complete(
-                    prompts.SYSTEM_EXTRACT_TERMS,
-                    prompts.extract_terms_prompt(candidates),
-                    max_tokens=1500,
-                )
-                for src, dst in _parse_terms(raw):
-                    self.db.put_glossary(self.jid, src, dst, kind="term", locked=True)
-            except Exception as exc:
-                self.log(f"  ! 术语定名失败，降级为不加术语表：{exc}")
-
+        sample = "\n".join(r["src_text"] for r in rows[:400])
         try:
             card = self.engine.complete(
                 prompts.SYSTEM_STYLE_CARD, prompts.style_card_prompt(sample), max_tokens=500
@@ -216,12 +228,12 @@ class Pipeline:
                     continue
                 todo.append((row, ck))
 
-            for i in range(0, len(todo), o.batch_size):
+            done_count = 0
+            for batch in _batches(todo, o.batch_size):
                 if self.should_stop and self.should_stop():
                     self.db.set_state(self.jid, "paused")
                     self.log("已暂停（当前批次已完成，进度已保存）")
                     return
-                batch = todo[i : i + o.batch_size]
                 items: list[Item] = []
                 affixes: dict[tuple[int, int, int], tuple[str, str]] = {}
                 for row, ck in batch:
@@ -293,8 +305,9 @@ class Pipeline:
                     self.db.set_state(self.jid, "paused")
                     self.log("预算到点，已暂停")
                     return
-                if o.log_every and (i // o.batch_size) % o.log_every == 0:
-                    self._progress(cidx, len(chapters), len(todo), i + len(batch))
+                done_count += len(batch)
+                if o.log_every:
+                    self._progress(cidx, len(chapters), len(todo), done_count)
         self.db.refresh_stats(self.jid)
 
     def _salvage(self, row, cidx: int, ctx: Context) -> str | None:
@@ -457,6 +470,25 @@ class Pipeline:
             f"缓存命中 {self.stats.segments_cached}"
         )
         return self.stats
+
+
+def _batches(todo: list, batch_size: int, max_chars: int = 2600):
+    """按字符数动态分批。
+
+    固定“一次 4 段”在长短段混排时会炸：四个长段叠起来能把 prompt 推到上万字符，
+    免费小模型直接超时。按总字符数封顶比按段数封顶稳得多。
+    """
+    batch: list = []
+    size = 0
+    for item in todo:
+        n = len(item[0]["src_text"])
+        if batch and (len(batch) >= batch_size or size + n > max_chars):
+            yield batch
+            batch, size = [], 0
+        batch.append(item)
+        size += n
+    if batch:
+        yield batch
 
 
 def _chapter_title(blocks) -> str:
