@@ -403,7 +403,9 @@ class Pipeline:
         for r in rows:
             k = (r["chapter_idx"], r["block_idx"])
             expect[k] = expect.get(k, 0) + 1
-            if r["state"] in ("done", "review") and r["dst_text"]:
+            # 只用 done：review 段存的是原文，若参与渲染，双语模式下会出现“原文+原文”。
+            # 不完整的块会被下面跳过，于是整块保留原文，比中英混杂好。
+            if r["state"] == "done" and r["dst_text"]:
                 by_chapter.setdefault(r["chapter_idx"], {}).setdefault(r["block_idx"], []).append(
                     (r["seg_idx"], r["dst_text"])
                 )
