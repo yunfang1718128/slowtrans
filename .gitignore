@@ -7,3 +7,5 @@ data/
 *.epub
 !tests/fixtures/*.epub
 .pytest_cache/
+
+*.egg-info/
