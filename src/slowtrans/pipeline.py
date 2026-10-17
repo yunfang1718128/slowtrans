@@ -229,6 +229,7 @@ class Pipeline:
                 todo.append((row, ck))
 
             done_count = 0
+            chapter_started = time.time()
             for batch in _batches(todo, o.batch_size):
                 if self.should_stop and self.should_stop():
                     self.db.set_state(self.jid, "paused")
@@ -307,7 +308,7 @@ class Pipeline:
                     return
                 done_count += len(batch)
                 if o.log_every:
-                    self._progress(cidx, len(chapters), len(todo), done_count)
+                    self._progress(cidx, len(chapters), len(todo), done_count, time.time() - chapter_started)
         self.db.refresh_stats(self.jid)
 
     def _salvage(self, row, cidx: int, ctx: Context) -> str | None:
@@ -383,13 +384,14 @@ class Pipeline:
         )
         return cost >= self.opts.budget_cny
 
-    def _progress(self, cidx: int, total_ch: int, total: int, done: int) -> None:
+    def _progress(self, cidx: int, total_ch: int, total: int, done: int, chapter_elapsed: float) -> None:
+        # 用本章耗时而不是进程总耗时：分析阶段和前面的长章会把速率算得过于乐观
         elapsed = time.time() - self.stats.started
-        rate = done / elapsed if elapsed > 0 else 0
+        rate = done / chapter_elapsed if chapter_elapsed > 0 else 0
         eta = (total - done) / rate if rate > 0 else 0
         self.log(
-            f"    {done}/{total} 段 | {rate:.2f} 段/s | 已用 {elapsed/60:.1f} 分 | "
-            f"剩约 {eta/60:.1f} 分 | tokens in/out "
+            f"    {done}/{total} 段 | {rate:.2f} 段/s | 本章已用 {chapter_elapsed/60:.1f} 分 | "
+            f"剩约 {eta/60:.1f} 分 | 总计 {elapsed/60:.1f} 分 | tokens in/out "
             f"{self.stats.usage.prompt_tokens}/{self.stats.usage.completion_tokens}"
         )
 
