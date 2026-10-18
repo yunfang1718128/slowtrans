@@ -17,7 +17,8 @@ from pathlib import Path
 from . import __version__
 from .config import load_config, parse_engine_spec
 from .db import DB, job_id_for
-from .engines.openai_compat import MockEngine, OpenAICompatEngine
+from .engines.mock import MockEngine
+from .engines.openai_compat import OpenAICompatEngine
 from .pipeline import Pipeline, RunOptions
 
 

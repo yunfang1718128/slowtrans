@@ -1,5 +1,6 @@
 from .base import Context, Engine, EngineError, Item, Result, Usage, estimate_tokens
-from .openai_compat import MockEngine, OpenAICompatEngine
+from .mock import MockEngine
+from .openai_compat import OpenAICompatEngine
 
 __all__ = [
     "Context",

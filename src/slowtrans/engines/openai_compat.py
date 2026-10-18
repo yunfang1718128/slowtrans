@@ -242,30 +242,3 @@ def _parse_numbered(text: str) -> dict[int, str] | None:
         body = body.lstrip("：: ").strip()
         out[int(m.group(1))] = body
     return out
-
-
-class MockEngine:
-    """离线测试用：把原文加上标记，验证结构与断点，不花钱。"""
-
-    def __init__(self, fail_at: set[int] | None = None):
-        self.id = "mock:echo"
-        self.batch_size = 4
-        self.fail_at = fail_at or set()
-        self.calls = 0
-
-    def translate(self, items: list[Item], ctx: Context) -> tuple[list[Result], Usage]:
-        results: list[Result] = []
-        usage = Usage()
-        for it in items:
-            self.calls += 1
-            if it.key[1] in self.fail_at:
-                results.append(Result(it.key, "", ok=False, error="mock failure"))
-                continue
-            text = f"[译]{it.text}"
-            results.append(Result(it.key, text))
-            usage.prompt_tokens += 10
-            usage.completion_tokens += 10
-        return results, usage
-
-    def complete(self, system: str, user: str, max_tokens: int = 800) -> str:
-        return "- mock 风格规则"

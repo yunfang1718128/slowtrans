@@ -12,7 +12,7 @@ import json
 import sqlite3
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -118,10 +118,33 @@ def text_hash(s: str) -> str:
     return hashlib.sha256(norm_text(s).encode("utf-8")).hexdigest()
 
 
+_DIGEST_CACHE: dict[tuple[str, int, float], str] = {}
+
+
+def _file_digest(path: Path) -> str:
+    """内容哈希（按 mtime/size 缓存）。
+
+    早期用文件大小当标识：同名同大小换一本书会沿用旧进度，
+    症状是"新书一打开就显示已完成"。哈希一遍几十 MB 的书只要零点几秒。
+    """
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime)
+    hit = _DIGEST_CACHE.get(key)
+    if hit:
+        return hit
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    _DIGEST_CACHE[key] = digest
+    return digest
+
+
 def job_id_for(src_path: str | Path, lang_from: str, lang_to: str, provider: str, model: str) -> str:
     """同一本书 + 同一引擎 => 同一个 job_id，天然支持断点续跑。"""
     st = Path(src_path).resolve()
-    payload = f"{st}|{st.stat().st_size}|{lang_from}|{lang_to}|{provider}|{model}"
+    payload = f"{st}|{_file_digest(st)}|{lang_from}|{lang_to}|{provider}|{model}"
     return "j_" + hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -141,28 +164,75 @@ class DB:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path, isolation_level=None)
+        # check_same_thread=False：FastAPI 的同步依赖在线程池里建连接，
+        # 路由函数在事件循环线程里用它。每个请求一个独立连接，不会并发共用。
+        self.conn = sqlite3.connect(
+            self.path, isolation_level=None, check_same_thread=False, timeout=30
+        )
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self._migrate()
 
+    def close(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "DB":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def _migrate(self) -> None:
         """老库平滑升级：SQLite 没有 IF NOT EXISTS 加列，只能先查。"""
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(jobs)")}
-        if "out_path_mono" not in cols:
-            self.conn.execute("ALTER TABLE jobs ADD COLUMN out_path_mono TEXT")
+        for col, decl in (
+            ("out_path_mono", "TEXT"),
+            ("budget_cny", "REAL NOT NULL DEFAULT 0"),
+            ("bilingual", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {decl}")
 
     # ---------- job ----------
     def ensure_job(self, jid: str, **kw) -> None:
         ts = now()
         self.conn.execute(
             "INSERT OR IGNORE INTO jobs(id,src_path,out_path,lang_from,lang_to,provider,model,"
-            "state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "state,created_at,updated_at,budget_cny,bilingual) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (jid, kw["src_path"], kw.get("out_path"), kw["lang_from"], kw["lang_to"],
-             kw["provider"], kw["model"], "created", ts, ts),
+             kw["provider"], kw["model"], "created", ts, ts,
+             float(kw.get("budget_cny") or 0), int(bool(kw.get("bilingual", True)))),
         )
 
+    # 允许的状态迁移。故意宽松：只用来发现"绕过 queued 直接重跑"这类异常，
+    # 不阻断流程——把用户卡在某个状态比状态机不严谨更糟。
+    _ALLOWED = {
+        "created": {"queued", "segmenting", "failed", "cancelled"},
+        "queued": {"segmenting", "analyzing", "done", "failed", "cancelled", "paused"},
+        "segmenting": {"analyzing", "translating", "failed", "cancelled", "paused"},
+        "analyzing": {"translating", "failed", "cancelled", "paused", "awaiting_review"},
+        "awaiting_review": {"translating", "cancelled", "paused"},
+        "translating": {"done", "failed", "cancelled", "paused", "verifying"},
+        "verifying": {"done", "failed", "paused"},
+        "paused": {"queued", "translating", "segmenting", "failed", "cancelled", "done"},
+        "done": {"queued", "done"},
+        "failed": {"queued", "done", "cancelled"},
+        "cancelled": {"queued", "cancelled"},
+    }
+
     def set_state(self, jid: str, state: str, error: str | None = None) -> None:
+        row = self.conn.execute("SELECT state FROM jobs WHERE id=?", (jid,)).fetchone()
+        if row and row["state"] != state:
+            allowed = self._ALLOWED.get(row["state"])
+            if allowed is not None and state not in allowed:
+                import sys
+
+                sys.stderr.write(
+                    f"[slowtrans] 非预期状态迁移 {row['state']} -> {state} (job {jid})\n"
+                )
         self.conn.execute(
             "UPDATE jobs SET state=?, error=?, updated_at=? WHERE id=?", (state, error, now(), jid)
         )
@@ -283,6 +353,100 @@ class DB:
             " WHERE job_id=? AND idx=?",
             (jid, idx, jid, idx),
         )
+
+    # ---------- 查询视图（供 HTTP 层用，避免 API 里写裸 SQL） ----------
+    def list_jobs(self, state: str | None = None, limit: int = 50) -> list[sqlite3.Row]:
+        if state:
+            return self.conn.execute(
+                "SELECT * FROM jobs WHERE state=? ORDER BY updated_at DESC LIMIT ?",
+                (state, limit),
+            ).fetchall()
+        return self.conn.execute(
+            "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+    def job_chapters(self, jid: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT idx,href,title,seg_total,seg_done FROM chapters WHERE job_id=? ORDER BY idx",
+            (jid,),
+        ).fetchall()
+
+    def job_review(self, jid: str, limit: int = 50) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT chapter_idx,block_idx,seg_idx,src_text,error FROM segments"
+            " WHERE job_id=? AND state='review' LIMIT ?",
+            (jid, limit),
+        ).fetchall()
+
+    def job_log(self, jid: str, limit: int = 200) -> list[sqlite3.Row]:
+        rows = self.conn.execute(
+            "SELECT id,type,ts,data FROM events WHERE job_id=? ORDER BY id DESC LIMIT ?",
+            (jid, limit),
+        ).fetchall()
+        return rows[::-1]
+
+    def jobs_by_src(self) -> dict[str, sqlite3.Row]:
+        return {
+            str(Path(r["src_path"]).resolve()): r
+            for r in self.conn.execute("SELECT * FROM jobs")
+        }
+
+    def mark_queued(self, jid: str, state: str = "queued") -> None:
+        self.conn.execute(
+            "UPDATE jobs SET state=?, updated_at=? WHERE id=?", (state, now(), jid)
+        )
+
+    def chapter_done_blocks(self, jid: str, chapter_idx: int) -> tuple[dict[int, int], dict[int, list]]:
+        """返回 (每块期望段数, 每块已完成译文)。只查一章，组装时不再全量加载。"""
+        expect: dict[int, int] = {}
+        done: dict[int, list] = {}
+        for r in self.conn.execute(
+            "SELECT block_idx, seg_idx, state, dst_text FROM segments"
+            " WHERE job_id=? AND chapter_idx=? ORDER BY block_idx, seg_idx",
+            (jid, chapter_idx),
+        ):
+            b = r["block_idx"]
+            expect[b] = expect.get(b, 0) + 1
+            if r["state"] == "done" and r["dst_text"]:
+                done.setdefault(b, []).append((r["seg_idx"], r["dst_text"]))
+        return expect, done
+
+    def chapter_idx_by_href(self, jid: str) -> dict[str, int]:
+        return {
+            r["href"]: r["idx"]
+            for r in self.conn.execute(
+                "SELECT idx, href FROM chapters WHERE job_id=?", (jid,)
+            )
+        }
+
+    # ---------- hooks ----------
+    def add_hook(self, url: str, events: list[str], secret: str = "") -> int:
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS hooks(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " url TEXT NOT NULL, events TEXT, secret TEXT, active INTEGER DEFAULT 1)"
+        )
+        cur = self.conn.execute(
+            "INSERT INTO hooks(url,events,secret,active) VALUES(?,?,?,1)",
+            (url, ",".join(events), secret),
+        )
+        return int(cur.lastrowid)
+
+    def active_hooks(self) -> list[sqlite3.Row]:
+        try:
+            return self.conn.execute(
+                "SELECT id,url,events,secret FROM hooks WHERE active=1"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    # ---------- 清理 ----------
+    def prune(self, events_days: int = 7, cache_days: int = 30) -> tuple[int, int]:
+        """长期运行必须有 TTL，否则 events/cache 会无声地吃掉磁盘。"""
+        e_cut = (datetime.now(timezone.utc) - timedelta(days=events_days)).isoformat()
+        c_cut = (datetime.now(timezone.utc) - timedelta(days=cache_days)).isoformat()
+        e = self.conn.execute("DELETE FROM events WHERE ts < ?", (e_cut,)).rowcount
+        c = self.conn.execute("DELETE FROM cache WHERE created_at < ?", (c_cut,)).rowcount
+        return e, c
 
     # ---------- cache ----------
     def cache_get(self, key: str) -> str | None:

@@ -5,7 +5,24 @@
 """
 from __future__ import annotations
 
-PROMPT_VERSION = "translate-v2"
+import hashlib
+
+_VERSION: str | None = None
+
+
+def prompt_version() -> str:
+    """模板内容哈希，自动生效。
+
+    之前是手写常量，改了模板忘升版本 → 缓存键不变 → 用旧译文冒充新 prompt，
+    而且完全不报错。这种"静默错误"比崩溃难查得多。
+    """
+    global _VERSION
+    if _VERSION is None:
+        h = hashlib.sha1()
+        for block in (SYSTEM_TRANSLATE, SYSTEM_EXTRACT_TERMS, SYSTEM_STYLE_CARD, SYSTEM_SUMMARY):
+            h.update(block.encode("utf-8"))
+        _VERSION = h.hexdigest()[:8]
+    return _VERSION
 
 SYSTEM_TRANSLATE = """你是资深译者，负责把书稿翻译成{target}。读者是普通成年读者。
 

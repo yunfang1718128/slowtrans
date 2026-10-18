@@ -56,11 +56,17 @@ def _serialize(tree, doctype: str | None) -> bytes:
 def write_epub(
     src_path: str | Path,
     out_path: str | Path,
-    plans: dict[str, ChapterPlan],
+    plans,
     bilingual: bool = True,
     strip_ruby: bool = True,
     force_horizontal: bool = True,
 ) -> WriteReport:
+    """plans 可以是 {href: ChapterPlan}，也可以是 href -> ChapterPlan 的回调。
+
+    回调形式是给大书用的：组装时按章查库，内存只跟一章有关，
+    而不是把整本书的译文一次性读进内存。
+    """
+    get_plan = plans if callable(plans) else (lambda href: plans.get(href))
     src_path, out_path = Path(src_path), Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     report = WriteReport()
@@ -87,10 +93,11 @@ def write_epub(
                     continue
                 data = zin.read(info)
 
-                if info.filename in chapter_hrefs and info.filename in plans:
-                    data = _rewrite_chapter(
-                        data, plans[info.filename], bilingual, strip_ruby, report
-                    )
+                plan = None
+                if info.filename in chapter_hrefs:
+                    plan = get_plan(info.filename)
+                if plan is not None and getattr(plan, "blocks", None):
+                    data = _rewrite_chapter(data, plan, bilingual, strip_ruby, report)
                     report.chapters_written += 1
                 elif info.filename.endswith(".css"):
                     data = _patch_css(data, force_horizontal, bilingual)

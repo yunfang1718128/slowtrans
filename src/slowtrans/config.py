@@ -19,6 +19,8 @@ batch_size = 4
 temperature = 0.3
 max_output_tokens = 3072
 request_timeout_s = 60
+price_in = 0.0        # 元/百万 token，预算控制用；免费模型填 0
+price_out = 0.0
 
 [scheduler]
 concurrency = 1
@@ -87,7 +89,33 @@ class Config:
         return self.data_dir / "slowtrans.db"
 
 
+_CACHE: dict[tuple[str, str], tuple[tuple[float, float], "Config"]] = {}
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def load_config(
+    path: str | os.PathLike[str] | None = None, data_dir: str | os.PathLike[str] | None = None
+) -> Config:
+    """带 mtime 缓存：HTTP 每个请求要读 2-3 次配置，别每次都碰磁盘。"""
+    p = Path(path) if path else None
+    base = Path(data_dir) if data_dir else Path("data")
+    key = (str(p or ""), str(base))
+    stamp = (_mtime(p) if p else 0.0, _mtime(base / "settings.json"))
+    hit = _CACHE.get(key)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    cfg = _build_config(p, data_dir)
+    _CACHE[key] = (stamp, cfg)
+    return cfg
+
+
+def _build_config(
     path: str | os.PathLike[str] | None = None, data_dir: str | os.PathLike[str] | None = None
 ) -> Config:
     raw: dict[str, Any] = tomllib.loads(DEFAULT_CONFIG)

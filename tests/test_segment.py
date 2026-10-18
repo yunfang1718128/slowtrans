@@ -87,7 +87,7 @@ def test_render_block_restores_atomic_elements(sample_epub):
 
 def test_full_pipeline_mock(sample_epub, tmp_path):
     from slowtrans.db import DB
-    from slowtrans.engines.openai_compat import MockEngine
+    from slowtrans.engines.mock import MockEngine
     from slowtrans.pipeline import Pipeline, RunOptions
 
     out = tmp_path / "out.epub"
@@ -106,7 +106,7 @@ def test_full_pipeline_mock(sample_epub, tmp_path):
 
 def test_resume_is_idempotent(sample_epub, tmp_path):
     from slowtrans.db import DB
-    from slowtrans.engines.openai_compat import MockEngine
+    from slowtrans.engines.mock import MockEngine
     from slowtrans.pipeline import Pipeline, RunOptions
 
     out = tmp_path / "out.epub"

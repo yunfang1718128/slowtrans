@@ -19,7 +19,8 @@ from . import prompts
 from .db import DB, Segment, job_id_for, text_hash
 from .engines.base import Context, Engine, EngineError, Item, Result, Usage, estimate_tokens
 from .epub.ocf import local, read_package, spine_items
-from .epub.package import ChapterPlan, WriteReport, write_epub
+from . import notify
+from .assembler import AssembleResult, assemble as assemble_outputs
 from .epub.segment import PH_RE, detach_affixes, placeholders_of, segment_chapter
 from .glossary import extract_candidates
 
@@ -239,6 +240,7 @@ class Pipeline:
             for batch in _batches(todo, o.batch_size):
                 if self.should_stop and self.should_stop():
                     self.db.set_state(self.jid, "paused")
+                    self._emit("job.paused", {"chapter": cidx + 1, "done": done_count})
                     self.log("已暂停（当前批次已完成，进度已保存）")
                     return
                 items: list[Item] = []
@@ -402,78 +404,50 @@ class Pipeline:
         )
 
     # ---------------- 4. 组装 ----------------
-    def assemble(self) -> WriteReport | None:
+    def assemble(self) -> AssembleResult | None:
         if self.opts.dry_run:
             return None
-        rows = self.db.all_segments(self.jid)
-        by_chapter: dict[int, dict[int, list[tuple[int, str]]]] = {}
-        expect: dict[tuple[int, int], int] = {}
-        for r in rows:
-            k = (r["chapter_idx"], r["block_idx"])
-            expect[k] = expect.get(k, 0) + 1
-            # 只用 done：review 段存的是原文，若参与渲染，双语模式下会出现“原文+原文”。
-            # 不完整的块会被下面跳过，于是整块保留原文，比中英混杂好。
-            if r["state"] == "done" and r["dst_text"]:
-                by_chapter.setdefault(r["chapter_idx"], {}).setdefault(r["block_idx"], []).append(
-                    (r["seg_idx"], r["dst_text"])
-                )
-
-        plans: dict[str, ChapterPlan] = {}
-        skipped = 0
-        for cidx, blocks in by_chapter.items():
-            href = self.href_by_idx.get(cidx)
-            if not href:
-                row = self.db.conn.execute(
-                    "SELECT href FROM chapters WHERE job_id=? AND idx=?", (self.jid, cidx)
-                ).fetchone()
-                href = row["href"] if row else None
-            if not href:
-                continue
-            plan = ChapterPlan()
-            for bidx, segs in blocks.items():
-                if len(segs) < expect.get((cidx, bidx), len(segs)):
-                    skipped += 1
-                    continue
-                plan.blocks[bidx] = [t for _, t in sorted(segs)]
-            if plan.blocks:
-                plans[href] = plan
-
-        if skipped:
-            self.log(f"  ! {skipped} 个块未译完，已跳过（不会写入半成品）")
-        if not plans:
-            self.log("没有任何可组装的章节")
-            return None
-        if not self.opts.bilingual and skipped and not self.opts.allow_partial:
-            self.log("纯译文模式且不完整，按配置中止组装")
-            return None
-        report = write_epub(
+        res = assemble_outputs(
+            self.db,
+            self.jid,
             self.opts.src,
             self.opts.out,
-            plans,
             bilingual=self.opts.bilingual,
+            emit_mono=self.opts.emit_mono,
+            allow_partial=self.opts.allow_partial,
+            log=self.log,
         )
-        mono_path = None
-        if self.opts.bilingual and self.opts.emit_mono:
-            mono_path = self.opts.out.with_name(
-                f"{self.opts.out.stem}.mono{self.opts.out.suffix}"
-            )
-            mono_rep = write_epub(self.opts.src, mono_path, plans, bilingual=False)
-            self.db.set_mono_path(self.jid, str(mono_path))
-            report.problems.extend(mono_rep.problems)
+        if not res.bilingual_path:
+            return None
+        if res.mono_path:
+            self.db.set_mono_path(self.jid, str(res.mono_path))
         self.db.set_state(self.jid, "done")
-        self.db.event(
-            self.jid, "job.completed",
-            {"chapters": report.chapters_written, "blocks": report.blocks_replaced,
-             "bytes": report.bytes_out, "out": str(self.opts.out),
-             "mono_out": str(mono_path) if mono_path else None},
+        self._emit(
+            "job.completed",
+            {
+                "chapters": res.chapters,
+                "blocks": res.blocks,
+                "bytes": res.bytes,
+                "out": str(res.bilingual_path),
+                "mono_out": str(res.mono_path) if res.mono_path else None,
+                "skipped_blocks": res.skipped_blocks,
+            },
         )
         self.log(
-            f"成品（双语）：{self.opts.out}（{report.chapters_written} 章，"
-            f"{report.blocks_replaced} 块，{report.bytes_out/1024/1024:.2f} MB，自检通过）"
+            f"成品（双语）：{res.bilingual_path}（{res.chapters} 章，"
+            f"{res.blocks} 块，{res.bytes/1024/1024:.2f} MB，自检通过）"
         )
-        if mono_path:
-            self.log(f"成品（纯译文）：{mono_path}（{mono_path.stat().st_size/1024/1024:.2f} MB）")
-        return report
+        if res.mono_path:
+            self.log(
+                f"成品（纯译文）：{res.mono_path}"
+                f"（{res.mono_path.stat().st_size/1024/1024:.2f} MB）"
+            )
+        return res
+
+    def _emit(self, event: str, data: dict) -> None:
+        """事件唯一出口：写 events 表（SSE 用）+ 派发 webhook。"""
+        self.db.event(self.jid, event, data)
+        notify.dispatch(self.db, self.jid, event, data)
 
     # ---------------- 总控 ----------------
     def run(self) -> Stats:
@@ -522,7 +496,7 @@ def _chapter_title(blocks) -> str:
 
 
 def _cache_key(src_hash: str, gver: int, sver: int, model: str, lang_to: str) -> str:
-    payload = f"{src_hash}|g{gver}|s{sver}|{model}|{prompts.PROMPT_VERSION}|{lang_to}"
+    payload = f"{src_hash}|g{gver}|s{sver}|{model}|{prompts.prompt_version()}|{lang_to}"
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
