@@ -22,8 +22,7 @@ def _chapter_data(path, href="OEBPS/ch1.xhtml"):
 
 def test_flatten_keeps_inline_as_placeholder(sample_epub):
     root, cs = segment_chapter(_chapter_data(sample_epub), "OEBPS/ch1.xhtml")
-    by_block = {s.block_idx: s for s in cs.segments}
-    # 第三块含 <em> 与 <span id>：两个占位符
+    # 第三块含 <em> 与 <span id>：文字会被展开，只有空锚点保留为占位符
     target = [s for s in cs.segments if "He said" in s.template]
     assert target, "应该能抽出含内联标签的段落"
     assert "{{0}}" in target[0].template or "{{1}}" in target[0].template

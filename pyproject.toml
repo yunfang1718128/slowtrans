@@ -10,15 +10,45 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "slowtrans contributors" }]
-keywords = ["epub", "translation", "llm", "low-memory", "self-hosted"]
+keywords = ["epub", "translation", "llm", "low-memory", "self-hosted", "openai-compatible"]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
   "License :: OSI Approved :: MIT License",
+  "Natural Language :: Chinese (Simplified)",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Text Processing :: Markup",
 ]
 dependencies = ["lxml>=5.0"]
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.urls]
+# 上传前把 YOUR-NAME 换成你的 GitHub 用户名
+Homepage = "https://github.com/YOUR-NAME/slowtrans"
+Repository = "https://github.com/YOUR-NAME/slowtrans"
+Issues = "https://github.com/YOUR-NAME/slowtrans/issues"
+Changelog = "https://github.com/YOUR-NAME/slowtrans/blob/main/CHANGELOG.md"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# 故意只开"会出错"的规则：风格问题不值得在低配服务器项目里制造 diff 噪音
+select = ["E4", "E7", "E9", "F"]
+ignore = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [project.scripts]
 slowtrans = "slowtrans.cli:main"

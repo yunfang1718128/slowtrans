@@ -1,6 +1,12 @@
 # slowtrans
 
+[![CI](https://github.com/YOUR-NAME/slowtrans/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-NAME/slowtrans/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > 在 1.7 GB 内存的小服务器上，用免费/廉价 LLM API 慢慢把 EPUB 译成中文，可随时中断、改术语只重译受影响段落。
+
+[English](README.en.md) · [变更记录](CHANGELOG.md) · [实测数据](docs/benchmark.md) · [参与开发](CONTRIBUTING.md)
 
 `slowtrans` 不是又一个「一键翻译整本书」的脚本。它解决的是另外三个问题：
 
@@ -97,6 +103,19 @@ book.zh.mono.epub   纯中文：只有译文，适合正常阅读
 
 > 免费模型的可用性/额度随时会变。`--engine` 只是 `provider:model`，换模型不用改代码。
 > 引擎层统一走 OpenAI 兼容协议，任何兼容 endpoint（DeepSeek、百炼、Ollama、vLLM）都能直接用。
+
+## 界面
+
+`slowtrans serve` 自带一个单页控制台，无构建、无 CDN、无前端工程：
+
+| 视图 | 内容 |
+|---|---|
+| 书库 | 读 epub 的 OPF 元数据 + 封面，封面墙点一下开工；已译过的书角上有状态 |
+| 任务 | 进度环、章节完成度、待复核段及原因、事件日志、单章预览、双语/纯中文两份下载 |
+| 设置 | API key（只回显掩码）、默认模型（免费模型排前面）、书库目录、自定义服务商 + 探活 |
+
+> 仓库暂未附截图：书库会对真实书籍封面截图，涉及版权素材，建议你自己跑起来截图后
+> 放进 `docs/` 并在 Pull Request 里替换这一行。
 
 ## 它是怎么保证译名一致的
 
@@ -212,7 +231,17 @@ Nice=10
 
 ## 实测
 
-（见 `docs/benchmark.md`，每次跑样书都会更新）
+样书 `Fantasy: How It Works`（Oxford，883 KB）：
+
+| 指标 | 值 |
+|---|---|
+| 分段 | 1460（旧分段规则）→ 1716（内联容器元素展开后） |
+| 完成 | 1452/1460，待复核 8，失败 0 |
+| 耗时 | 86 分钟（约 16 段/分钟） |
+| 峰值内存 | **51.9 MB**（全量 + 组装，psutil 采样） |
+| 成品 | 双语 1.08 MB / 纯中文 0.86 MB |
+
+细节、免费模型核对方式和踩过的 9 个坑见 [`docs/benchmark.md`](docs/benchmark.md)。
 
 ## 已知限制
 
@@ -228,12 +257,15 @@ Nice=10
 - [x] 术语表 + 风格卡 + 缓存版本化
 - [x] 断点续传、预算、退避、熔断
 - [x] REST + SSE 桥接
-- [x] 内置面板
+- [x] 内置面板（书库 / 任务 / 设置 / 预览）
 - [x] AstrBot 插件
+- [x] 双语 + 纯中文双份成品
+- [x] 任意 OpenAI 兼容服务商（面板增删 + 探活）
+- [x] 英文 README / CI / 贡献指南
 - [ ] 半自动审核（`awaiting_review` 状态）
 - [ ] 格式转换：md/txt/html/docx → epub（同一 job 队列）
 - [ ] 一致性自动巡检（译名漂移扫描）
-- [ ] 英文 README / Dockerfile / PyPI
+- [ ] Dockerfile / PyPI 发布
 
 ## 许可证
 

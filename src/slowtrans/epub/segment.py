@@ -259,7 +259,6 @@ def render_block(
 ) -> list[etree._Element]:
     """把一段或多段译文渲染成新的块元素（超出长度上限时一段一个）。"""
     _, phs = flatten_block(src_block, strip_ruby=strip_ruby)
-    tag = src_block.tag
     out: list[etree._Element] = []
     for si, text in enumerate(texts):
         # deepcopy 而不是重新建：namespace、class、id、data-* 全部原样保留
