@@ -6,7 +6,7 @@
 
 > 在 1.7 GB 内存的小服务器上，用免费/廉价 LLM API 慢慢把 EPUB 译成中文，可随时中断、改术语只重译受影响段落。
 
-[English](README.en.md) · [变更记录](CHANGELOG.md) · [实测数据](docs/benchmark.md) · [参与开发](CONTRIBUTING.md)
+[English](README.en.md) · [**从零到出书**](docs/quickstart.md) · [变更记录](CHANGELOG.md) · [实测数据](docs/benchmark.md) · [参与开发](CONTRIBUTING.md)
 
 `slowtrans` 不是又一个「一键翻译整本书」的脚本。它解决的是另外三个问题：
 
@@ -38,6 +38,8 @@
   设置页里直接填 API key。单文件、无构建、无 CDN。
 
 ## 快速开始
+
+> 完整的两条路线（本地 / 服务器，含上传书、隧道、排错）见 **[docs/quickstart.md](docs/quickstart.md)**。
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate

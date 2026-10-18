@@ -132,14 +132,24 @@ def cmd_inspect(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    import uvicorn
+    try:
+        import uvicorn
 
-    from .api.app import create_app
+        from .api.app import create_app
+    except ImportError as exc:
+        raise SystemExit(
+            "面板和 HTTP 接口需要额外依赖（你只装了核心包）：\n"
+            '  pip install "slowtrans[api]"\n'
+            "如果只是命令行翻译，用 slowtrans run 不需要这些。\n"
+            f"（原始错误：{exc}）"
+        )
 
-    app = create_app(config_path=args.config, data_dir=args.data)
+    from .config import resolve_data_dir
+
+    data_dir = resolve_data_dir(args.config, args.data)
+    app = create_app(config_path=args.config, data_dir=str(data_dir))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
-
 
 def cmd_convert(args) -> int:
     print(
