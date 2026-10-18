@@ -1,9 +1,47 @@
 # slowtrans
 
-> Translate EPUB books slowly and cheaply on a tiny server — resumable, term-consistent,
-> and designed for 1.7 GB RAM boxes running other services.
+> Translate EPUB books with **free-tier** LLM APIs for **$0**. Slow, resumable, and still better than dumping the whole book into a machine-translation API.
 
 [中文文档](README.md) · [Changelog](CHANGELOG.md) · [Benchmark](docs/benchmark.md)
+
+## What it does
+
+SiliconFlow's `Qwen2.5-7B`, Zhipu's `glm-4-flash`, Tencent's `Hunyuan-MT` — the free tiers are meant for a few hundred tokens of chat,
+not for a 1,400-paragraph book that will time out, get rate-limited and break halfway.
+
+slowtrans does that unglamorous work: split the book into thousands of resumable segments,
+feed them to a free model one at a time, keep terminology consistent, and assemble a readable epub.
+
+Measured on a 300-page academic book (Oxford University Press):
+
+| | |
+|---|---|
+| Segments | 1,460 |
+| Wall time | 86 minutes (unattended) |
+| **API cost** | **$0** |
+| Peak RSS | 44.6 MB on a 1.7 GB server |
+
+## Cost comparison
+
+A book is roughly 100k–150k characters:
+
+| Option | Per book | Note |
+|---|---|---|
+| Google / DeepL translation API | $3–9 | fluent, but terminology drifts, no context |
+| Paid small LLM (GPT-4o-mini / Qwen-14B) | $0.01–0.4 | good, but you pay every time |
+| Human translation | $1,000+ | best quality, not for "I just want to read it" |
+| **slowtrans + free tier** | **$0** | glossary + style card + chapter summaries |
+
+> Free tiers are vendor subsidies and change without notice. Every price is configurable:
+> when a model starts charging, put `price_in` / `price_out` in `config.toml` and the budget
+> guard stops the job before it costs you anything unexpected.
+
+## Why not just another translation script
+
+1. **Weak machine** — 36 MB resident, single concurrency, does not fight other services on the box.
+2. **Free APIs are slow and rate-limited** — token bucket, exponential backoff, circuit breaker, budget, time window.
+3. **Long books drift** — glossary + style card + chapter summaries in SQLite; changing a term only retranslates matching segments.
+4. **Small models break markup** — inline tags are placeholder-protected; failures degrade to plain retranslation, then to the original text.
 
 ## Why another EPUB translator
 
