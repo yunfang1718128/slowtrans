@@ -43,7 +43,7 @@ A book is roughly 100k–150k characters:
 3. **Long books drift** — glossary + style card + chapter summaries in SQLite; changing a term only retranslates matching segments.
 4. **Small models break markup** — inline tags are placeholder-protected; failures degrade to plain retranslation, then to the original text.
 
-## Why another EPUB translator
+## Design assumptions
 
 Existing tools assume "run it once and wait". This one assumes **the machine is weak, the API
 is free-but-slow, and the job will be interrupted**:
