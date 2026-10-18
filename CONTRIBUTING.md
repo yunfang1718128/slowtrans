@@ -7,7 +7,7 @@ python -m venv .venv
 . .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -e ".[api]" pytest ruff
 
-pytest -q                       # 16 个用例，全部离线，不花 API 钱
+pytest -q                       # 32 个用例，全部离线，不花 API 钱
 ruff check src tests
 ```
 

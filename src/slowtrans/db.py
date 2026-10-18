@@ -192,6 +192,8 @@ class DB:
             ("out_path_mono", "TEXT"),
             ("budget_cny", "REAL NOT NULL DEFAULT 0"),
             ("bilingual", "INTEGER NOT NULL DEFAULT 1"),
+            ("locked_by", "TEXT"),
+            ("locked_at", "TEXT"),
         ):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {decl}")
@@ -353,6 +355,38 @@ class DB:
             " WHERE job_id=? AND idx=?",
             (jid, idx, jid, idx),
         )
+
+    # ---------- 任务锁 ----------
+    def try_lock(self, jid: str, owner: str, stale_seconds: int = 900) -> bool:
+        """CAS 抢任务锁。
+
+        CLI 和服务可能同时指向同一个 job_id：两边都从 pending 取段、都调 API。
+        写库幂等不会丢数据，但会重复花钱。锁是唯一的防线。
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_seconds)).isoformat()
+        cur = self.conn.execute(
+            "UPDATE jobs SET locked_by=?, locked_at=? WHERE id=?"
+            " AND (locked_by IS NULL OR locked_by='' OR locked_at < ?)",
+            (owner, now(), jid, cutoff),
+        )
+        return cur.rowcount == 1
+
+    def touch_lock(self, jid: str, owner: str) -> None:
+        self.conn.execute(
+            "UPDATE jobs SET locked_at=? WHERE id=? AND locked_by=?", (now(), jid, owner)
+        )
+
+    def release_lock(self, jid: str, owner: str) -> None:
+        self.conn.execute(
+            "UPDATE jobs SET locked_by=NULL, locked_at=NULL WHERE id=? AND locked_by=?",
+            (jid, owner),
+        )
+
+    def job_lock(self, jid: str) -> tuple[str, str]:
+        row = self.conn.execute(
+            "SELECT locked_by, locked_at FROM jobs WHERE id=?", (jid,)
+        ).fetchone()
+        return (row["locked_by"] or "", row["locked_at"] or "") if row else ("", "")
 
     # ---------- 查询视图（供 HTTP 层用，避免 API 里写裸 SQL） ----------
     def list_jobs(self, state: str | None = None, limit: int = 50) -> list[sqlite3.Row]:

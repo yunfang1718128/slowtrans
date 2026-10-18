@@ -27,12 +27,13 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from .. import notify
-from ..config import load_config, parse_engine_spec
+from ..config import load_config, parse_engine_spec, validate_config
 from ..db import DB, job_id_for
 from ..engines.openai_compat import OpenAICompatEngine
 from ..library import cover_bytes, resolve_inside, scan_library
 from ..models import CATALOG, CUSTOM_PRESETS
-from ..pipeline import Pipeline, RunOptions
+from ..pipeline import Pipeline
+from ..runtime import engine_from_config, options_from_config
 from ..settings import load_settings, save_settings
 
 TERMINAL = {"done", "failed", "cancelled"}
@@ -102,6 +103,7 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        validate_config(load_config(rt.config_path, rt.data_dir))
         with DB(rt.data_dir / "slowtrans.db") as d:
             d.prune()          # 每次启动清一次过期事件/缓存
         rt.worker = asyncio.create_task(_worker(app))
@@ -573,35 +575,23 @@ async def _worker(app: FastAPI) -> None:
 
 def _run_job(rt: Runtime, jid: str) -> None:
     cfg = load_config(rt.config_path, rt.data_dir)
+    validate_config(cfg)
     with DB(rt.data_dir / "slowtrans.db") as d:
         row = d.job(jid)
         if row["state"] in TERMINAL:
             return
         provider, model = row["provider"], row["model"]
-        p = cfg.provider(provider)
-        engine = OpenAICompatEngine(
-            provider=provider,
-            model=model,
-            api_key=p.key(),
-            base_url=p.base_url,
-            batch_size=int(cfg.engine_cfg.get("batch_size", 4)),
-            timeout_s=int(cfg.engine_cfg.get("request_timeout_s", 60)),
-            max_output_tokens=int(cfg.engine_cfg.get("max_output_tokens", 3072)),
-            temperature=float(cfg.engine_cfg.get("temperature", 0.3)),
-        )
+        engine = engine_from_config(cfg, provider, model)
         stop = rt.stop_flags.setdefault(jid, threading.Event())
-        budget = float(row["budget_cny"] or 0) or float(cfg.sched_cfg.get("budget_cny", 0) or 0)
-        opts = RunOptions(
+        opts = options_from_config(
+            cfg,
             src=Path(row["src_path"]),
             out=Path(row["out_path"]),
             lang_from=row["lang_from"],
             lang_to=row["lang_to"],
             bilingual=bool(row["bilingual"] if row["bilingual"] is not None else True),
-            max_segment_chars=int(cfg.epub_cfg.get("max_segment_chars", 1200)),
-            batch_size=int(cfg.engine_cfg.get("batch_size", 4)),
+            # 0 表示"任务没设预算"，让它回落到 config
+            budget_cny=float(row["budget_cny"] or 0) or None,
             emit_mono=True,
-            budget_cny=budget,
-            price_in=float(cfg.engine_cfg.get("price_in", 0) or 0),
-            price_out=float(cfg.engine_cfg.get("price_out", 0) or 0),
         )
         Pipeline(opts, d, engine, provider, model, should_stop=stop.is_set).run()

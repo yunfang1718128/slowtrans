@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import zipfile
@@ -46,6 +47,13 @@ class RunOptions:
     emit_mono: bool = True     # 双语模式时额外产出一份纯译文
     dry_run: bool = False
     log_every: int = 1
+    # 下面这些以前只有 config 里有、代码不读，现在真正生效
+    strip_ruby: bool = True
+    force_horizontal: bool = True
+    window: str = ""           # "00:00-08:00"，空=全天
+    breaker_failures: int = 8
+    breaker_cooldown_s: float = 600.0
+    owner: str = ""            # 任务锁持有者
 
 
 @dataclass
@@ -86,15 +94,6 @@ class Pipeline:
     # ---------------- 1. 分段入库 ----------------
     def prepare(self) -> None:
         o = self.opts
-        self.db.ensure_job(
-            self.jid,
-            src_path=str(o.src),
-            out_path=str(o.out),
-            lang_from=o.lang_from,
-            lang_to=o.lang_to,
-            provider=self.provider,
-            model=self.model,
-        )
         self.db.set_state(self.jid, "segmenting")
         inserted = changed = 0
         with zipfile.ZipFile(o.src) as z:
@@ -103,7 +102,9 @@ class Pipeline:
                 href = item.href
                 try:
                     _, cs = segment_chapter(
-                        z.read(href), href, max_chars=o.max_segment_chars
+                        z.read(href), href,
+                        max_chars=o.max_segment_chars,
+                        strip_ruby=o.strip_ruby,
                     )
                 except Exception as exc:
                     self.log(f"  ! 跳过无法解析的章节 {href}: {exc}")
@@ -238,6 +239,8 @@ class Pipeline:
             done_count = 0
             chapter_started = time.time()
             for batch in _batches(todo, o.batch_size):
+                if o.window and not self._wait_for_window():
+                    return
                 if self.should_stop and self.should_stop():
                     self.db.set_state(self.jid, "paused")
                     self._emit("job.paused", {"chapter": cidx + 1, "done": done_count})
@@ -269,8 +272,14 @@ class Pipeline:
                             row["attempts"] + 1,
                         )
                     self.stats.segments_failed += len(batch)
-                    if breaker >= 8:
-                        raise SystemExit("连续失败过多，已停止（检查额度/网络/模型名）") from exc
+                    if breaker >= o.breaker_failures:
+                        self.log(
+                            f"  连续失败 {breaker} 次，冷却 {o.breaker_cooldown_s:.0f}s"
+                            "（检查额度/网络/模型名）"
+                        )
+                        time.sleep(o.breaker_cooldown_s)
+                        breaker = 0
+                        continue
                     time.sleep(min(o.backoff_max, o.backoff_base * (2 ** breaker)))
                     continue
 
@@ -344,6 +353,28 @@ class Pipeline:
             return text
         return None
 
+    def _wait_for_window(self) -> bool:
+        """时间窗外就等。返回 False 表示等待期间被要求停止。"""
+        from .runtime import in_window, seconds_until_window
+
+        if not self.opts.window or in_window(self.opts.window):
+            return True
+        announced = False
+        while not in_window(self.opts.window):
+            if self.should_stop and self.should_stop():
+                return False
+            wait = seconds_until_window(self.opts.window)
+            if not announced:
+                self.db.set_state(self.jid, "paused")
+                self._emit("job.waiting_window", {"window": self.opts.window, "seconds": wait})
+                self.log(f"不在时间窗 {self.opts.window} 内，等待 {wait/60:.0f} 分钟")
+                announced = True
+            time.sleep(min(60, max(1, wait)))
+        if announced:
+            self.db.set_state(self.jid, "translating")
+            self.log("进入时间窗，继续")
+        return True
+
     def _translate_with_retry(self, items: list[Item], ctx: Context) -> list:
         """返回顺序必须与 items 严格一致——错位会把译文写到别的段落上。"""
         o = self.opts
@@ -415,6 +446,8 @@ class Pipeline:
             bilingual=self.opts.bilingual,
             emit_mono=self.opts.emit_mono,
             allow_partial=self.opts.allow_partial,
+            strip_ruby=self.opts.strip_ruby,
+            force_horizontal=self.opts.force_horizontal,
             log=self.log,
         )
         if not res.bilingual_path:
@@ -451,6 +484,32 @@ class Pipeline:
 
     # ---------------- 总控 ----------------
     def run(self) -> Stats:
+        self._ensure_job()
+        owner = self.opts.owner or f"pid-{os.getpid()}"
+        if not self.db.try_lock(self.jid, owner):
+            held, at = self.db.job_lock(self.jid)
+            self.log(f"跳过：任务正被 {held or '另一个进程'} 处理（锁自 {at}）")
+            return self.stats
+        try:
+            return self._run_locked()
+        finally:
+            self.db.release_lock(self.jid, owner)
+
+    def _ensure_job(self) -> None:
+        o = self.opts
+        self.db.ensure_job(
+            self.jid,
+            src_path=str(o.src),
+            out_path=str(o.out),
+            lang_from=o.lang_from,
+            lang_to=o.lang_to,
+            provider=self.provider,
+            model=self.model,
+            budget_cny=o.budget_cny,
+            bilingual=o.bilingual,
+        )
+
+    def _run_locked(self) -> Stats:
         self.prepare()
         if self.opts.dry_run:
             self.log("dry-run：只做分段，不调用 API")

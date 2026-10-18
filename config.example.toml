@@ -7,27 +7,30 @@ model = "Qwen/Qwen2.5-7B-Instruct"
 batch_size = 4              # 一次请求翻几段；小模型建议 3-4
 temperature = 0.3
 max_output_tokens = 3072
-request_timeout_s = 90      # 免费模型偶尔排队，超时短一点 + 重试比长等更好
+request_timeout_s = 60      # 免费模型偶尔排队，超时短一点 + 重试比长等更好
+price_in = 0.0              # 元/百万 token；免费模型填 0，预算控制才有效
+price_out = 0.0
 
 [scheduler]
-concurrency = 1             # 2 核机器上并发没有收益，还会破坏术语一致性
+concurrency = 1             # 只能是 1；填别的启动时直接报错（并发会破坏术语一致性）
 rps = 0.0                   # 0=不限速。慢速部署可设 0.3
-max_retries = 4
+max_retries = 3
 backoff_base_s = 5
 backoff_max_s = 300
-breaker_failures = 8
-breaker_cooldown_s = 600
+breaker_failures = 8        # 连续失败多少次进入冷却
+breaker_cooldown_s = 600    # 冷却多久
 budget_cny = 0.0            # 0=不限。设定后到点自动 pause
-window = ""                 # 例 "00:00-08:00"，窗口外自动暂停
+window = ""                 # 例 "00:00-08:00"（支持跨午夜 22:00-06:00）
+                            # 窗口外会自动等待，每分钟检查一次是否该继续
 
 [epub]
-bilingual = true            # false = 只输出译文
+bilingual = true            # false = 只输出译文（也就不再额外产 mono 版）
 max_segment_chars = 1200    # 单段硬上限，超长段落按句切分
-strip_ruby_rt = true        # 日文注音丢弃
+strip_ruby_rt = true        # 日文注音丢弃（true 才丢）
 force_horizontal = true     # 强制横排（覆盖 vertical-rl）
 
 [paths]
-data_dir = "data"           # SQLite + 成品目录
+data_dir = "data"           # SQLite + 成品目录；命令行 --data 显式指定时以命令行为准
 
 [providers.siliconflow]
 base_url = "https://api.siliconflow.cn/v1"

@@ -37,6 +37,8 @@ def assemble(
     bilingual: bool = True,
     emit_mono: bool = True,
     allow_partial: bool = True,
+    strip_ruby: bool = True,
+    force_horizontal: bool = True,
     log=print,
 ) -> AssembleResult:
     idx_by_href = db.chapter_idx_by_href(jid)
@@ -60,7 +62,10 @@ def assemble(
         return plan if plan.blocks else None
 
     result = AssembleResult()
-    report = write_epub(src, out, provider, bilingual=bilingual)
+    report = write_epub(
+        src, out, provider,
+        bilingual=bilingual, strip_ruby=strip_ruby, force_horizontal=force_horizontal,
+    )
     result.bilingual_path = out
     result.chapters = report.chapters_written
     result.blocks = report.blocks_replaced
@@ -79,7 +84,10 @@ def assemble(
 
     if bilingual and emit_mono:
         mono = out.with_name(f"{out.stem}.mono{out.suffix}")
-        mono_report = write_epub(src, mono, provider, bilingual=False)
+        mono_report = write_epub(
+            src, mono, provider,
+            bilingual=False, strip_ruby=strip_ruby, force_horizontal=force_horizontal,
+        )
         result.mono_path = mono
         result.problems.extend(mono_report.problems)
 

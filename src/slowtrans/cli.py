@@ -15,11 +15,11 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .config import load_config, parse_engine_spec
+from .config import load_config, parse_engine_spec, resolve_data_dir, validate_config
 from .db import DB, job_id_for
 from .engines.mock import MockEngine
-from .engines.openai_compat import OpenAICompatEngine
-from .pipeline import Pipeline, RunOptions
+from .pipeline import Pipeline
+from .runtime import engine_from_config, options_from_config
 
 
 def _fix_console() -> None:
@@ -46,43 +46,38 @@ def _load_dotenv() -> None:
         return
 
 
-def _build_engine(cfg, spec: str, args):
-    provider, model = parse_engine_spec(spec)
-    if provider == "mock":
-        return MockEngine(), provider, model
-    p = cfg.provider(provider)
-    engine = OpenAICompatEngine(
-        provider=provider,
-        model=model,
-        api_key=p.key(),
-        base_url=p.base_url,
-        temperature=args.temperature,
-        timeout_s=args.timeout,
-        batch_size=args.batch,
-        rps=args.rps,
-        max_output_tokens=int(cfg.engine_cfg.get("max_output_tokens", 3072)),
-        extra_body=json.loads(args.extra_body) if args.extra_body else None,
-    )
-    return engine, provider, model
-
-
 def cmd_run(args) -> int:
-    cfg = load_config(args.config, args.data)
+    data_dir = resolve_data_dir(args.config, args.data)
+    cfg = load_config(args.config, data_dir)
+    validate_config(cfg)
+
     src = Path(args.src)
     if not src.exists():
         raise SystemExit(f"找不到输入文件：{src}")
     out = Path(args.out) if args.out else src.with_name(src.stem + f".{args.to}.epub")
 
     spec = args.engine or f"{cfg.engine_cfg.get('provider')}:{cfg.engine_cfg.get('model')}"
-    engine, provider, model = _build_engine(cfg, spec, args)
+    provider, model = parse_engine_spec(spec)
+    if provider == "mock":
+        engine = MockEngine()
+        provider, model = "mock", "echo"
+    else:
+        engine = engine_from_config(
+            cfg, provider, model,
+            batch_size=args.batch,
+            rps=args.rps,
+            timeout_s=args.timeout,
+            temperature=args.temperature,
+            extra_body=json.loads(args.extra_body) if args.extra_body else None,
+        )
 
-    opts = RunOptions(
+    opts = options_from_config(
+        cfg,
         src=src,
         out=out,
         lang_from=args.src_lang,
         lang_to=args.to,
-        bilingual=not args.mono,
-        emit_mono=not args.no_mono,
+        bilingual=False if args.mono else None,
         max_segment_chars=args.max_chars,
         batch_size=args.batch,
         limit_segments=args.limit,
@@ -92,12 +87,16 @@ def cmd_run(args) -> int:
         budget_cny=args.budget,
         price_in=args.price_in,
         price_out=args.price_out,
+        emit_mono=not args.no_mono,
         dry_run=args.dry_run,
     )
-    db = DB(Path(args.data) / "slowtrans.db")
+    db = DB(data_dir / "slowtrans.db")
     pipe = Pipeline(opts, db, engine, provider, model)
     print(f"job {pipe.jid} | {provider}:{model} | {opts.lang_from} -> {opts.lang_to}")
-    stats = pipe.run()
+    try:
+        stats = pipe.run()
+    finally:
+        db.close()
     if not args.dry_run:
         print(
             f"统计：新译 {stats.segments_done}，缓存命中 {stats.segments_cached}，"
@@ -174,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(sp):
         sp.add_argument("--config", default=None, help="TOML 配置文件")
-        sp.add_argument("--data", default="data", help="状态库与产物目录")
+        sp.add_argument("--data", default=None, help="状态库与产物目录（默认取 config 的 paths.data_dir）")
 
     r = sub.add_parser("run", help="跑完整流程")
     r.add_argument("--src", required=True)
@@ -182,21 +181,21 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--from", dest="src_lang", default="en")
     r.add_argument("--to", default="zh-CN")
     r.add_argument("--engine", default=None, help="provider:model，如 siliconflow:Qwen/Qwen2.5-7B-Instruct")
-    r.add_argument("--batch", type=int, default=4)
+    r.add_argument("--batch", type=int, default=None)
     r.add_argument("--limit", type=int, default=0, help="只入库前 N 段（调试用）")
-    r.add_argument("--max-chars", type=int, default=1200)
+    r.add_argument("--max-chars", type=int, default=None)
     r.add_argument("--mono", action="store_true", help="只输出译文（默认双语对照）")
     r.add_argument("--no-mono", action="store_true", help="双语模式下不额外产出纯译文版")
     r.add_argument("--no-analyze", action="store_true", help="跳过术语/风格分析")
     r.add_argument("--dry-run", action="store_true", help="只分段不调用 API")
-    r.add_argument("--temperature", type=float, default=0.3)
-    r.add_argument("--timeout", type=int, default=90)
-    r.add_argument("--retries", type=int, default=4)
-    r.add_argument("--backoff", type=float, default=8.0)
-    r.add_argument("--rps", type=float, default=0.0)
-    r.add_argument("--budget", type=float, default=0.0, help="预算上限（元），0=不限")
-    r.add_argument("--price-in", type=float, default=0.0, help="输入价格 元/百万token")
-    r.add_argument("--price-out", type=float, default=0.0, help="输出价格 元/百万token")
+    r.add_argument("--temperature", type=float, default=None)
+    r.add_argument("--timeout", type=int, default=None)
+    r.add_argument("--retries", type=int, default=None)
+    r.add_argument("--backoff", type=float, default=None)
+    r.add_argument("--rps", type=float, default=None)
+    r.add_argument("--budget", type=float, default=None, help="预算上限（元），0=不限")
+    r.add_argument("--price-in", type=float, default=None, help="输入价格 元/百万token")
+    r.add_argument("--price-out", type=float, default=None, help="输出价格 元/百万token")
     r.add_argument("--extra-body", default=None, help='额外请求体 JSON，如 {"enable_thinking":false}')
     common(r)
     r.set_defaults(func=cmd_run)

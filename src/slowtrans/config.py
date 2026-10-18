@@ -92,6 +92,42 @@ class Config:
 _CACHE: dict[tuple[str, str], tuple[tuple[float, float], "Config"]] = {}
 
 
+def resolve_data_dir(config_path: str | os.PathLike[str] | None, explicit: str | None = None) -> Path:
+    """数据目录的解析顺序：命令行/API 显式 > config 的 [paths].data_dir > "data"。
+
+    之前 CLI 的 --data 默认就是 "data"，导致 config 里的 paths.data_dir 永远不生效。
+    """
+    if explicit:
+        return Path(explicit)
+    if config_path:
+        p = Path(config_path)
+        if p.exists():
+            try:
+                raw = tomllib.loads(p.read_text(encoding="utf-8"))
+                value = raw.get("paths", {}).get("data_dir")
+                if value:
+                    return Path(value)
+            except Exception:
+                pass
+    return Path("data")
+
+
+def validate_config(cfg: Config) -> None:
+    """启动时校验那些"写了必须生效"的配置，避免静默忽略。"""
+    concurrency = cfg.sched_cfg.get("concurrency", 1)
+    if int(concurrency) != 1:
+        raise SystemExit(
+            f"[scheduler].concurrency 只支持 1（当前 {concurrency}）。"
+            "并发会破坏术语表与章节摘要的顺序一致性。"
+        )
+    window = str(cfg.sched_cfg.get("window", "") or "")
+    if window:
+        from .runtime import parse_window
+
+        if parse_window(window) is None:
+            raise SystemExit(f"[scheduler].window 格式不对：{window!r}，应为 HH:MM-HH:MM")
+
+
 def _mtime(p: Path) -> float:
     try:
         return p.stat().st_mtime
