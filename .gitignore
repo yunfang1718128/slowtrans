@@ -10,4 +10,5 @@ data/
 
 *.egg-info/
 pytest-of-*/
-.pytest_cache/
+dist/
+build/
