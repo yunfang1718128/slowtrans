@@ -206,7 +206,9 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         if body.out_path:
             out = Path(body.out_path)
         else:
-            out = rt.data_dir / "outputs" / f"{src.stem}.{body.lang_to}.epub"
+            settings = load_settings(rt.data_dir)
+            out_dir = settings.outputs_dir(rt.data_dir / "outputs")
+            out = out_dir / f"{src.stem}.{body.lang_to}.epub"
             out.parent.mkdir(parents=True, exist_ok=True)
         jid = job_id_for(src, body.lang_from, body.lang_to, provider, model)
         d.ensure_job(
@@ -385,6 +387,9 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
             "engine": f"{cfg.engine_cfg['provider']}:{cfg.engine_cfg['model']}",
             "batch_size": cfg.engine_cfg.get("batch_size", 4),
             "library_root": str(lib_root()),
+            "outputs_dir": str(
+                load_settings(rt.data_dir).outputs_dir(rt.data_dir / "outputs").resolve()
+            ),
             "data_dir": str(rt.data_dir.resolve()),
         }
         return data
@@ -472,8 +477,12 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
             )
         except OSError as exc:
             raise HTTPException(400, f"写不进输出目录：{exc}（检查 out_path 权限）")
-        if not res.bilingual_path:
-            raise HTTPException(400, "还没有可组装的章节（可能一段都没译完）")
+        if not res.bilingual_path or res.blocks == 0:
+            # 一段都没译完时组装出来的就是原书，别拿这个当"成品"骗人
+            for f in (res.bilingual_path, res.mono_path):
+                if f:
+                    Path(f).unlink(missing_ok=True)
+            raise HTTPException(400, "还没有可组装的内容：一段都还没译完")
         if res.mono_path:
             d.set_mono_path(jid, str(res.mono_path))
         info = {

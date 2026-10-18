@@ -8,7 +8,7 @@ REPO=${1:-$(cd "$(dirname "$0")/.." && pwd)}
 PIP_MIRROR=${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
 
 echo "==> 目录"
-sudo mkdir -p "$APP" "$APP/data" /etc/slowtrans
+sudo mkdir -p "$APP" "$APP/data" "$APP/books" "$APP/outputs" /etc/slowtrans
 sudo chown -R "$(id -un):$(id -gn)" "$APP"
 
 echo "==> 代码"

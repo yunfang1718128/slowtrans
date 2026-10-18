@@ -28,7 +28,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/srv/slowtrans/data
+ReadWritePaths=/srv/slowtrans/data /srv/slowtrans/outputs
 
 [Install]
 WantedBy=multi-user.target

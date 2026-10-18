@@ -43,6 +43,10 @@ class Settings:
         raw = self.library.get("root") or ""
         return Path(raw).expanduser() if raw else fallback
 
+    def outputs_dir(self, fallback: Path) -> Path:
+        raw = self.library.get("outputs") or ""
+        return Path(raw).expanduser() if raw else fallback
+
     def masked(self, provider_names: list[str] | None = None) -> dict[str, Any]:
         """给面板看的安全视图：只透露前缀和长度，不返回明文。
 

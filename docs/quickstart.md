@@ -156,14 +156,23 @@ systemctl show slowtrans -p MemoryMax -p MemoryCurrent
 
 ### 5. 把书放上去
 
-服务**不提供上传**（上传是 WebDAV/scp 的职责）。任选：
+服务只读一个目录，写另一个目录，两边都跟别的服务无关：
 
-```bash
-scp book.epub my-server:/srv/books/            # 直接传
-# 或者你已经有 WebDAV/网盘挂载，指到那个目录
+```
+/srv/slowtrans/
+├── books/     你放书的地方（服务只读扫描）
+├── outputs/   译好的 epub 落在这里（服务可写）
+├── data/      SQLite、settings.json（服务可写）
+└── venv/
 ```
 
-然后在面板「设置 → 书库目录」填 `/srv/books`，书库会自动扫描出封面和书名。
+```bash
+scp book.epub my-server:/srv/slowtrans/books/
+```
+
+面板「设置」里可以改这两个目录，默认就是上面的 `books/` 和 `outputs/`。
+**服务不会读写 WebDAV、网盘或任何其他服务的数据目录**——想让它和书库联动，
+请用单独的同步任务（cron/rsync），而不是给翻译服务放宽权限。
 
 ### 6. 打开面板
 
