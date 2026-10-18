@@ -577,6 +577,15 @@ class DB:
         self.conn.execute("DELETE FROM jobs WHERE id=?", (jid,))
         self.conn.execute("COMMIT")
 
+    def add_usage(self, jid: str, tokens_in: int, tokens_out: int) -> None:
+        """把 token 消耗累计到任务上——面板要用它展示成本。"""
+        if not tokens_in and not tokens_out:
+            return
+        self.conn.execute(
+            "UPDATE jobs SET tokens_in=tokens_in+?, tokens_out=tokens_out+? WHERE id=?",
+            (tokens_in, tokens_out, jid),
+        )
+
     def set_build_stats(self, jid: str, total_blocks: int, partial_blocks: int) -> None:
         """记录这次组装有多少块因为没译完而被跳过。"""
         self.conn.execute(

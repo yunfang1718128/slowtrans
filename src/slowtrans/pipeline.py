@@ -409,6 +409,7 @@ class Pipeline:
             try:
                 res, usage = self.engine.translate(pending, ctx)
                 self.stats.usage.add(usage)
+                self.db.add_usage(self.jid, usage.prompt_tokens, usage.completion_tokens)
             except EngineError as exc:
                 if not exc.retryable:
                     raise
