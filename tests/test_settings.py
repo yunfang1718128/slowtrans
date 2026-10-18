@@ -10,11 +10,11 @@ from slowtrans.settings import load_settings, mask, save_settings
 
 def test_settings_mask_never_leaks_full_key(tmp_path: Path):
     s = load_settings(tmp_path)
-    save_settings(s, {"providers": {"siliconflow": {"api_key": "TEST-KEY-REDACTED"}}})
+    save_settings(s, {"providers": {"siliconflow": {"api_key": "TEST-KEY-abcdefghijklmnop"}}})
     view = load_settings(tmp_path).masked(["siliconflow", "zhipu"])
     hint = view["providers"]["siliconflow"]["hint"]
     assert "abcdefghij" not in hint
-    assert hint.startswith("sk-abc")
+    assert hint.startswith("TEST-K")
     assert view["providers"]["siliconflow"]["configured"] is True
     # 文件里没有的 provider 也要报出来（否则面板会误显示"未配置"）
     assert "zhipu" in view["providers"]
