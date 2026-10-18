@@ -136,11 +136,21 @@ SILICONFLOW_API_KEY=sk-...
 SLOWTRANS_TOKEN=<随机串，面板和插件都用它>
 ```
 
-生成 token：
+`install.sh` 首次运行时会**自动生成一个令牌并打印出来**。想自己换：
 
 ```bash
 python3 -c 'import secrets;print(secrets.token_urlsafe(32))'
 ```
+
+随时查询当前令牌：
+
+```bash
+sudo grep SLOWTRANS_TOKEN /etc/slowtrans/env
+```
+
+> 令牌是**你自己定的门锁密码**，用来防止本机/隧道上的其他程序乱动你的书。
+> 它和 `SILICONFLOW_API_KEY` 完全两回事——后者是平台发给你的通行证。
+> 把这一行留空则关闭鉴权（仅回环时可接受，不推荐）。
 
 > ⚠️ 这个文件必须是 **LF 换行**。在 Windows 上生成后传上去会带 `\r`，
 > systemd 读到的 key 末尾有回车，所有 API 调用报 `Invalid header value`。

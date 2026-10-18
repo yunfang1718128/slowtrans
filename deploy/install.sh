@@ -39,8 +39,14 @@ fi
 echo "==> 环境变量"
 if [ ! -f /etc/slowtrans/env ]; then
   sudo install -m 600 "$REPO/deploy/env.example" /etc/slowtrans/env
-  echo "!! 编辑 /etc/slowtrans/env 填入 API key 与 SLOWTRANS_TOKEN，再启动服务"
-  echo "!! token 生成：python3 -c 'import secrets;print(secrets.token_urlsafe(32))'"
+  # 初次部署直接把访问令牌生成好，省得用户还要自己找命令
+  TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
+  sudo sed -i "s|^SLOWTRANS_TOKEN=.*|SLOWTRANS_TOKEN=$TOKEN|" /etc/slowtrans/env
+  echo "!! 已生成访问令牌（面板和 AstrBot 插件都用它）："
+  echo "!!   $TOKEN"
+  echo "!! 还需要编辑 /etc/slowtrans/env 填 API key：sudo nano /etc/slowtrans/env"
+else
+  echo "    /etc/slowtrans/env 已存在，保留原有 API key 与令牌"
 fi
 echo "!! 这个文件必须是 LF 换行。Windows 上用 write_text 生成会带 \\r，"
 echo "!! systemd 读进去后 key 末尾有 \\r，所有 API 调用报 Invalid header value。"
