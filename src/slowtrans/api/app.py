@@ -453,6 +453,36 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         }
 
     # ------------------------------------------------------------ 预览 / 产物
+    @app.delete("/api/v1/jobs/{jid}", dependencies=[Depends(auth)])
+    async def delete_job(jid: str, d: DB = Depends(get_db)) -> dict:
+        """终止 = 删干净：停掉（如果在跑）→ 删记录 → 删成品。不可恢复。"""
+        row = require_job(d, jid)
+        owner = f"{socket.gethostname()}:{os.getpid()}"
+        held, _ = d.job_lock(jid)
+        if held.startswith(owner):
+            rt.abort_flags.setdefault(jid, threading.Event()).set()
+            for _ in range(60):
+                await asyncio.sleep(1)
+                if not d.job_lock(jid)[0]:
+                    break
+            else:
+                raise HTTPException(409, "任务仍在收尾（最长约 60 秒），请稍后再试")
+
+        removed: list[str] = []
+        for key in ("out_path", "out_path_mono"):
+            raw = row[key]
+            if not raw:
+                continue
+            path = Path(raw)
+            if path.exists():
+                try:
+                    path.unlink()
+                    removed.append(str(path))
+                except OSError as exc:
+                    raise HTTPException(500, f"删不掉成品文件：{exc}")
+        d.delete_job(jid)
+        return {"deleted": True, "job_id": jid, "files_removed": removed}
+
     @app.post("/api/v1/jobs/{jid}/build", dependencies=[Depends(auth)])
     async def build_now(jid: str, d: DB = Depends(get_db)) -> dict:
         """把"截至目前已译完的部分"组装成 epub。

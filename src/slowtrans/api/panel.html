@@ -503,7 +503,8 @@ async function renderDetail(){
     <div style="display:flex;flex-direction:column;gap:8px">
       ${canPause?`<button class="btn" data-act="pause">暂停</button>`:''}
       ${canResume?`<button class="btn primary" data-act="resume">继续</button>`:''}
-      ${canAbort?`<button class="btn danger" data-act="abort">终止</button>`:''}
+      ${canAbort?`<button class="btn danger" data-act="abort" title="停止并删除这个任务的所有记录和成品">终止</button>`
+        :`<button class="btn danger" data-act="abort" title="删除这个任务的所有记录和成品">删除</button>`}
       ${s.done>0?`<button class="btn" data-act="build" title="把目前已译完的部分组装成 epub">生成当前成品</button>`:''}
       <button class="btn ${comp.partial?'warnbtn':''}" data-act="download" data-variant="bilingual"
         ${comp.partial?`title="${esc(partialTip(comp))}"`:''}>双语 EPUB${comp.partial?` · 部分 ${comp.percent}%`:''}</button>

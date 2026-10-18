@@ -81,3 +81,34 @@ def test_auth_required_when_token_set(tmp_path: Path, monkeypatch):
         assert ok.status_code == 200
         # health/catalog 不需要 token，方便探活
         assert c.get("/api/v1/health").status_code == 200
+
+
+def test_delete_job_removes_everything(client, tmp_path):
+    """终止 = 删干净：连记录带成品文件都不该留。"""
+    from slowtrans.db import DB
+
+    db = DB(tmp_path / "slowtrans.db")
+    out = tmp_path / "outputs" / "x.zh.epub"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"fake epub")
+    db.ensure_job(
+        "j_del", src_path=str(tmp_path / "a.epub"), out_path=str(out),
+        lang_from="en", lang_to="zh-CN", provider="siliconflow", model="m",
+    )
+    db.put_glossary("j_del", "foo", "福", locked=True)
+    db.event("j_del", "job.queued", {})
+    db.close()
+
+    r = client.delete("/api/v1/jobs/j_del")
+    assert r.status_code == 200
+    assert r.json()["deleted"] is True
+    assert not out.exists()
+
+    db = DB(tmp_path / "slowtrans.db")
+    for table in ("jobs", "segments", "chapters", "events", "glossary", "style_cards"):
+        assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+    db.close()
+
+
+def test_delete_missing_job_404(client):
+    assert client.delete("/api/v1/jobs/j_nope").status_code == 404

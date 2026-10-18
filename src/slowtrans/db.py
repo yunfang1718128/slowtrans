@@ -561,6 +561,14 @@ class DB:
             "SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?", (last_id, limit)
         ).fetchall()
 
+    def delete_job(self, jid: str) -> None:
+        """连任务带所有痕迹一起删。cache 表是按内容哈希的全局缓存，不删。"""
+        self.conn.execute("BEGIN")
+        for table in ("segments", "chapters", "events", "glossary", "style_cards"):
+            self.conn.execute(f"DELETE FROM {table} WHERE job_id=?", (jid,))
+        self.conn.execute("DELETE FROM jobs WHERE id=?", (jid,))
+        self.conn.execute("COMMIT")
+
     def set_build_stats(self, jid: str, total_blocks: int, partial_blocks: int) -> None:
         """记录这次组装有多少块因为没译完而被跳过。"""
         self.conn.execute(
