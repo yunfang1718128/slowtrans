@@ -31,7 +31,8 @@
 - 图片内文字不译；DRM 书直接报错。
 - 日文 `ruby` 注音默认丢弃，竖排强制改横排。
 - 免费模型清单是 2026-10 的快照，额度随时会变（`scripts/scan_free.py` 可重新核对）。
-- 服务器实机部署尚未验证（本机 Windows + Python 3.13 已跑通全量样书）。
+- 已在阿里云 ECS（Debian 13 / Python 3.13 / 2 核 1.7 GB）实机部署验证：
+  服务常驻 36 MB，全量分段 + 组装峰值 44.6 MB，远低于 `MemoryMax=320M`。
 
 ### 实测（样书 `Fantasy: How It Works`）
 
