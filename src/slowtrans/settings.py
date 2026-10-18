@@ -57,6 +57,8 @@ class Settings:
                 "configured": bool(key),
                 "hint": mask(key),
                 "source": "file" if key else ("env" if os.environ.get(_env_name(name)) else "none"),
+                "base_url": str(self.providers.get(name, {}).get("base_url") or ""),
+                "custom": bool(self.providers.get(name, {}).get("base_url")),
             }
         return out
 
@@ -97,7 +99,13 @@ def save_settings(settings: Settings, patch: dict[str, Any]) -> Settings:
         target = data.setdefault(section, {})
         for k, v in incoming.items():
             if section == "providers" and isinstance(v, dict):
+                if v.get("remove"):
+                    target.pop(k, None)
+                    continue
                 cur = target.setdefault(k, {})
+                for f in ("base_url", "api_key_env", "model", "label"):
+                    if f in v:
+                        cur[f] = str(v[f] or "")
                 if "api_key" in v:
                     key = str(v["api_key"] or "")
                     if key:  # 空 = 保持不变，避免面板误清空

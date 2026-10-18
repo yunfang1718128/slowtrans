@@ -105,8 +105,19 @@ def load_config(
     from .settings import load_settings
 
     s = load_settings(base_dir)
-    for name, prov in providers.items():
-        prov.file_key = s.provider_key(name)
+    # 面板里可以新增任意 OpenAI 兼容服务商：settings 里带 base_url 就建一个 Provider
+    for name, scfg in s.providers.items():
+        if name not in providers:
+            if not scfg.get("base_url"):
+                continue
+            providers[name] = Provider(
+                name=name,
+                base_url=str(scfg["base_url"]),
+                api_key_env=str(scfg.get("api_key_env") or (name.upper() + "_API_KEY")),
+            )
+        elif scfg.get("base_url"):
+            providers[name].base_url = str(scfg["base_url"])
+        providers[name].file_key = str(scfg.get("api_key") or "")
     defaults = s.defaults or {}
     if defaults.get("provider"):
         raw.setdefault("engine", {})["provider"] = defaults["provider"]

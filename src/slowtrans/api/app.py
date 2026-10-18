@@ -29,6 +29,7 @@ from ..db import DB
 from ..engines.openai_compat import OpenAICompatEngine
 from ..library import cover_bytes, resolve_inside, scan_library
 from ..pipeline import Pipeline, RunOptions
+from ..models import CATALOG, CUSTOM_PRESETS
 from ..settings import load_settings, save_settings
 
 TERMINAL = {"done", "failed", "cancelled"}
@@ -54,6 +55,13 @@ class GlossaryPut(BaseModel):
     dst: str
     locked: bool = True
     replan: bool = False
+
+
+class ProbeRequest(BaseModel):
+    provider: str | None = None
+    base_url: str | None = None
+    model: str
+    api_key: str | None = None
 
 
 class SettingsPatch(BaseModel):
@@ -334,6 +342,51 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         data = load_settings(rt.data_dir).masked(list(cfg.providers))
         data["note"] = "已保存；新任务立即生效，进行中的任务下一批生效"
         return data
+
+    # ---------- 模型目录 / 连通性 ----------
+    @app.get("/api/v1/catalog")
+    async def catalog() -> dict:
+        return {
+            "providers": {
+                name: [
+                    {"id": o.id, "note": o.note, "free": o.free, "default": o.default}
+                    for o in opts
+                ]
+                for name, opts in CATALOG.items()
+            },
+            "presets": CUSTOM_PRESETS,
+        }
+
+    @app.post("/api/v1/settings/probe", dependencies=[Depends(auth)])
+    async def probe(body: ProbeRequest) -> dict:
+        """用最小请求验证一个 endpoint 能不能用。不落盘、不记日志。"""
+        cfg = load_config(rt.config_path, rt.data_dir)
+        if body.base_url:
+            base, key = body.base_url, (body.api_key or "")
+        else:
+            try:
+                p = cfg.provider(body.provider or "siliconflow")
+            except SystemExit as exc:
+                raise HTTPException(400, str(exc))
+            base, key = p.base_url, (body.api_key or p.key())
+        if not key:
+            return {"ok": False, "error": "没有可用的 API key"}
+        engine = OpenAICompatEngine(
+            provider=body.provider or "custom", model=body.model, api_key=key,
+            base_url=base, timeout_s=30, max_output_tokens=32,
+        )
+        t0 = time.time()
+        try:
+            reply = engine.complete("You are a health checker.", "Reply with exactly: pong", max_tokens=16)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:300], "latency_ms": int((time.time() - t0) * 1000)}
+        return {
+            "ok": True,
+            "reply": (reply or "").strip()[:80],
+            "latency_ms": int((time.time() - t0) * 1000),
+            "model": body.model,
+            "base_url": base,
+        }
 
     # ---------- 产物 ----------
     @app.get("/api/v1/jobs/{jid}/log", dependencies=[Depends(auth)])

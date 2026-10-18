@@ -349,50 +349,88 @@ function jobRow(j){
 views.settings = () => {
   const st = state.settings;
   if(!st) return `<div class="head"><div><h1>设置</h1></div></div><div class="skel" style="height:180px"></div>`;
-  const provs = ['siliconflow','zhipu'];
-  const names = {siliconflow:'硅基流动', zhipu:'智谱 AI'};
+  const cat = state.catalog || {providers:{}, presets:[]};
+  const builtin = {siliconflow:'硅基流动', zhipu:'智谱 AI'};
+  const customs = Object.keys(st.providers||{}).filter(n=>!(n in builtin));
+  const curProv = st.defaults.provider || 'siliconflow';
+  const models = (cat.providers||{})[curProv] || [];
+  const curModel = st.defaults.model || '';
+  const inList = models.some(m=>m.id===curModel);
+  const provNames = [...Object.keys(builtin), ...customs];
+
+  const keyCard = name => {
+    const info = (st.providers||{})[name] || {};
+    const label = builtin[name] || name;
+    const tag = info.configured ? `<span class="tag on">已配置 ${esc(info.hint)}</span>`
+              : (info.source==='env' ? `<span class="tag on">来自环境变量</span>` : `<span class="tag">未配置</span>`);
+    return `<div class="prov">
+      <div class="top">${esc(label)} ${tag}
+        <span style="margin-left:auto;display:flex;gap:6px">
+          <button type="button" class="btn sm" data-act="probe" data-prov="${esc(name)}">测试</button>
+          ${builtin[name]?'':`<button type="button" class="btn sm danger" data-act="delprov" data-prov="${esc(name)}">删除</button>`}
+        </span>
+      </div>
+      ${info.base_url?`<div class="hint" style="margin-top:-4px">${esc(info.base_url)}</div>`:''}
+      <input type="password" name="key_${esc(name)}" placeholder="${info.configured?'留空则不修改':'粘贴 API Key'}" autocomplete="off">
+    </div>`;
+  };
+
   return `
-  <div class="head"><div><h1>设置</h1><p>填一次就够，新任务立即生效</p></div></div>
+  <div class="head"><div><h1>设置</h1><p>填一次就够；新任务立即生效</p></div></div>
   <form class="form" id="settingsForm">
-    <div class="card"><h2>API KEY</h2><div class="in" style="display:grid;gap:14px">
-      ${provs.map(p=>{
-        const info = st.providers[p] || {};
-        return `<div class="prov">
-          <div class="top">${names[p]}
-            <span class="tag ${info.configured||info.source==='env'?'on':''}">
-              ${info.configured ? '已配置 '+esc(info.hint) : (info.source==='env' ? '来自环境变量' : '未配置')}
-            </span>
+    <div class="card"><h2>API KEY <span class="dim" style="font-weight:400">内置服务商</span></h2>
+      <div class="in" style="display:grid;gap:12px">
+        ${Object.keys(builtin).map(keyCard).join('')}
+        ${customs.map(keyCard).join('')}
+        <button type="button" class="btn ghost" data-act="showcustom">+ 添加 OpenAI 兼容服务商</button>
+        <div class="prov hidden" id="customForm">
+          <div class="top">自定义服务商</div>
+          <div class="row">
+            <div class="field"><label>名称（字母数字）</label><input name="c_name" placeholder="deepseek"></div>
+            <div class="field"><label>Base URL</label><input name="c_base" placeholder="https://api.deepseek.com/v1"></div>
           </div>
-          <input type="password" name="key_${p}" placeholder="${info.configured?'留空则不修改':'粘贴 '+names[p]+' 的 API Key'}" autocomplete="off">
-          <div class="hint">只写入 <code>data/settings.json</code>（600 权限），接口永远只返回掩码。</div>
-        </div>`;
-      }).join('')}
-    </div></div>
+          <div class="row">
+            <div class="field"><label>API Key</label><input type="password" name="c_key" autocomplete="off"></div>
+            <div class="field"><label>默认模型</label><input name="c_model" placeholder="deepseek-chat"></div>
+          </div>
+          <div class="hint">预填：${(cat.presets||[]).map(p=>`<a href="#" data-act="preset" data-p='${esc(JSON.stringify(p))}'>${esc(p.name)}</a>`).join(' · ')}</div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button type="button" class="btn primary sm" data-act="addprov">保存这个服务商</button>
+            <button type="button" class="btn sm ghost" data-act="hidecustom">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="card"><h2>默认引擎</h2><div class="in" style="display:grid;gap:14px">
       <div class="row">
         <div class="field"><label>服务商</label>
-          <select name="provider" id="provsel">
-            <option value="siliconflow">硅基流动</option>
-            <option value="zhipu">智谱 AI</option>
+          <select name="provider">
+            ${provNames.map(n=>`<option value="${esc(n)}" ${n===curProv?'selected':''}>${esc(builtin[n]||n)}</option>`).join('')}
           </select></div>
-        <div class="field"><label>模型</label>
-          <input name="model" list="models" placeholder="Qwen/Qwen2.5-7B-Instruct">
-          <datalist id="models">
-            <option>Qwen/Qwen2.5-7B-Instruct</option>
-            <option>THUDM/GLM-4-9B-0414</option>
-            <option>tencent/Hunyuan-MT-7B</option>
-            <option>Qwen/Qwen3-8B</option>
-            <option>glm-4-flash</option>
-          </datalist></div>
-      </div>
-      <div class="hint">硅基流动上托管的 Qwen/GLM/Hunyuan 都用同一个 key；换模型不用换 key。</div>
-      <div class="row">
         <div class="field"><label>源语言</label><select name="lang_from">
-          <option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option></select></div>
-        <div class="field"><label>目标语言</label><select name="lang_to">
-          <option value="zh-CN">简体中文</option><option value="zh-TW">繁体中文</option></select></div>
+          <option value="en" ${st.defaults.lang_from==='en'?'selected':''}>英语</option>
+          <option value="ja" ${st.defaults.lang_from==='ja'?'selected':''}>日语</option>
+          <option value="ko" ${st.defaults.lang_from==='ko'?'selected':''}>韩语</option></select></div>
       </div>
+      <div class="field"><label>模型 <span class="dim">（该服务商的免费模型排在前面）</span></label>
+        <select name="model_sel">
+          ${models.map(m=>`<option value="${esc(m.id)}" ${m.id===curModel?'selected':''}>${esc(m.id)} — ${m.free?'免费':'付费'} · ${esc(m.note)}</option>`).join('')}
+          <option value="__manual" ${inList?'':'selected'}>手动输入其它模型…</option>
+        </select>
+      </div>
+      <div class="field ${inList?'hidden':''}" id="manualWrap">
+        <label>模型 ID</label>
+        <input name="model_manual" value="${esc(inList?'':curModel)}" placeholder="provider 的模型名，例如 Qwen/Qwen2.5-7B-Instruct">
+      </div>
+      <div class="row">
+        <div class="field"><label>目标语言</label><select name="lang_to">
+          <option value="zh-CN" ${st.defaults.lang_to==='zh-CN'?'selected':''}>简体中文</option>
+          <option value="zh-TW" ${st.defaults.lang_to==='zh-TW'?'selected':''}>繁体中文</option></select></div>
+        <div class="field"><label>批量上限（字符）</label>
+          <div class="hint" style="padding-top:9px">按总字符数动态分批，默认 2600。改这个要改 config.toml。</div></div>
+      </div>
+      <div class="hint">免费模型清单来自 2026-10 的两家定价页核对，随时可能变；付费模型会走预算控制。</div>
     </div></div>
 
     <div class="card"><h2>书库</h2><div class="in" style="display:grid;gap:10px">
@@ -511,12 +549,12 @@ function render(){
 function fillSettings(){
   const st = state.settings; if(!st) return;
   const f = $('#settingsForm'); if(!f) return;
-  const eff = String(st.effective?.engine || '').split(':');
-  f.provider.value = st.defaults.provider || eff[0] || 'siliconflow';
-  f.model.value = st.defaults.model || eff.slice(1).join(':') || '';
-  f.lang_from.value = st.defaults.lang_from || 'en';
-  f.lang_to.value = st.defaults.lang_to || 'zh-CN';
-  f.libroot.value = st.library.root || '';
+  // 服务商/模型已经由模板渲染好，这里只处理"手动输入模型"的显隐
+  const sel = f.model_sel;
+  if(sel){
+    const wrap = $('#manualWrap');
+    if(wrap) wrap.classList.toggle('hidden', sel.value !== '__manual');
+  }
 }
 
 async function loadCovers(){
@@ -555,6 +593,10 @@ async function loadLibrary(force){
 }
 async function loadJobs(){
   try{ state.jobs = await api('/api/v1/jobs?limit=50'); }catch(e){ state.jobs=[]; }
+}
+async function loadCatalog(){
+  if(state.catalog) return;
+  try{ state.catalog = await api('/api/v1/catalog'); }catch(e){ state.catalog = {providers:{},presets:[]}; }
 }
 async function loadSettings(force){
   if(state.settings && !force) return;
@@ -605,6 +647,26 @@ document.addEventListener('click', async ev => {
   else if(act==='download'){ await jobAction('download'); }
   else if(act==='preview'){ await previewChapter(+t.dataset.ch); }
   else if(act==='closepreview'){ $('#prevcard').classList.add('hidden'); }
+  else if(act==='showcustom'){ $('#customForm').classList.remove('hidden'); }
+  else if(act==='hidecustom'){ $('#customForm').classList.add('hidden'); }
+  else if(act==='addprov'){ await saveCustomProvider(); }
+  else if(act==='probe'){ await probeProvider(t.dataset.prov); }
+  else if(act==='preset'){
+    ev.preventDefault();
+    const p = JSON.parse(t.dataset.p);
+    const f = $('#settingsForm');
+    f.c_name.value = p.name; f.c_base.value = p.base_url; f.c_model.value = p.model;
+    return;
+  }
+  else if(act==='delprov'){
+    const name = t.dataset.prov;
+    if(!confirm('删除自定义服务商 '+name+' ？')) return;
+    try{
+      state.settings = await api('/api/v1/settings', {method:'PUT',
+        body:JSON.stringify({providers:{[name]:{remove:true}}})});
+      toast('已删除 '+name,'ok'); render();
+    }catch(e){ toast(e.message,'bad'); }
+  }
 });
 
 async function openBook(rel){
@@ -620,12 +682,15 @@ document.addEventListener('submit', async ev => {
   if(ev.target.id!=='settingsForm') return;
   ev.preventDefault();
   const f = ev.target;
+  const selModel = f.model_sel.value;
+  const model = selModel === '__manual' ? f.model_manual.value.trim() : selModel;
   const body = { providers:{}, defaults:{}, library:{} };
-  for(const p of ['siliconflow','zhipu']){
-    const v = f['key_'+p].value.trim();
-    if(v) body.providers[p] = {api_key:v};
+  for(const inp of f.querySelectorAll('input[name^="key_"]')){
+    const name = inp.name.slice(4);
+    const v = inp.value.trim();
+    if(v) body.providers[name] = { api_key: v };
   }
-  body.defaults = { provider:f.provider.value, model:f.model.value.trim(),
+  body.defaults = { provider:f.provider.value, model,
                     lang_from:f.lang_from.value, lang_to:f.lang_to.value };
   body.library = { root: f.libroot.value.trim() };
   try{
@@ -633,6 +698,59 @@ document.addEventListener('submit', async ev => {
     toast('设置已保存','ok');
     state.library = null; await loadLibrary(true); render();
   }catch(e){ toast('保存失败：'+e.message,'bad'); }
+});
+
+async function saveCustomProvider(){
+  const f = $('#settingsForm'); const box = $('#customForm');
+  const name = (f.c_name.value||'').trim().toLowerCase();
+  const base = (f.c_base.value||'').trim();
+  const key = (f.c_key.value||'').trim();
+  const model = (f.c_model.value||'').trim();
+  if(!/^[a-z0-9_-]{2,32}$/.test(name)) return toast('名称只能用 2-32 位字母数字/下划线','bad');
+  if(!/^https?:\/\//.test(base)) return toast('Base URL 必须以 http(s):// 开头','bad');
+  if(!key && !base.includes('127.0.0.1') && !base.includes('localhost')) return toast('远程服务必须填 API Key','bad');
+  try{
+    const body = { providers:{ [name]:{ base_url:base, api_key:key||'local', model } },
+                   defaults:{ provider:name, model } };
+    state.settings = await api('/api/v1/settings', {method:'PUT', body:JSON.stringify(body)});
+    toast('已添加 '+name,'ok'); render();
+  }catch(e){ toast('添加失败：'+e.message,'bad'); }
+}
+
+async function probeProvider(name){
+  const cat = state.catalog || {providers:{}};
+  const opts = cat.providers[name] || [];
+  const model = (state.settings?.defaults?.model && state.settings.defaults.provider===name)
+    ? state.settings.defaults.model
+    : (opts.find(o=>o.default)?.id || opts[0]?.id || '');
+  if(!model) return toast('先选一个模型再测试','bad');
+  toast('正在测试 '+name+' / '+model+' …');
+  try{
+    const r = await api('/api/v1/settings/probe', {method:'POST', body:JSON.stringify({provider:name, model})});
+    if(r.ok) toast(`✓ ${model} ${r.latency_ms}ms · 回复「${r.reply||'空'}」`,'ok');
+    else toast('✗ '+r.error,'bad');
+  }catch(e){ toast('测试失败：'+e.message,'bad'); }
+}
+
+function updateModelOptions(prov){
+  const f = $('#settingsForm'); if(!f || !f.model_sel) return;
+  const models = (state.catalog?.providers||{})[prov] || [];
+  const cur = f.model_sel.value;
+  f.model_sel.innerHTML = models.map(m =>
+    `<option value="${esc(m.id)}">${esc(m.id)} — ${m.free?'免费':'付费'} · ${esc(m.note)}</option>`).join('')
+    + `<option value="__manual">手动输入其它模型…</option>`;
+  if(models.some(m=>m.id===cur)) f.model_sel.value = cur;
+  else if(models.length) f.model_sel.value = models[0].id;
+  else f.model_sel.value = '__manual';
+  $('#manualWrap').classList.toggle('hidden', f.model_sel.value !== '__manual');
+}
+
+document.addEventListener('change', ev => {
+  if(ev.target.name === 'provider') updateModelOptions(ev.target.value);
+  if(ev.target.name === 'model_sel'){
+    const wrap = $('#manualWrap');
+    if(wrap) wrap.classList.toggle('hidden', ev.target.value !== '__manual');
+  }
 });
 
 $('#gsave').onclick = () => { localStorage.setItem('st_token', $('#ginput').value.trim()); $('#gate').classList.add('hidden'); boot(); };
@@ -658,6 +776,7 @@ function connectEvents(){
 async function boot(){
   await loadHealth();
   try{
+    await loadCatalog();
     await loadSettings();
     if(state.view==='library') await loadLibrary(true);
   }catch(e){

@@ -52,14 +52,40 @@ slowtrans run --src book.epub --out test.epub --limit 40 --batch 4
 
 `--limit` 只入库前 N 段。之后去掉 `--limit` 重跑会自动补齐剩余段。
 
-### 免费模型参考
+### 免费模型（2026-10 核对）
 
-| provider | model | 备注 |
-|---|---|---|
-| siliconflow | `Qwen/Qwen2.5-7B-Instruct` | 中文表达自然，默认选择 |
-| siliconflow | `THUDM/GLM-4-9B-0414` | 占位符服从度好，语感略硬 |
-| siliconflow | `tencent/Hunyuan-MT-7B` | 最快、纯翻译模型，但会丢行内标记 |
-| zhipu | `glm-4-flash` | 备用通道，免费额度独立 |
+判定依据：硅基流动定价页 RSC payload 里 `pricing = 0/0` 或 DisplayName 带 `(Free)`；
+智谱官方模型概览页标注「免费文本模型」，并逐个实测可用性。
+
+| provider | model | 状态 | 备注 |
+|---|---|---|---|
+| siliconflow | `Qwen/Qwen2.5-7B-Instruct` | **免费·默认** | 指令跟随最好，批量可靠 |
+| siliconflow | `THUDM/GLM-4-9B-0414` | 免费 | 中文稳，语感略硬 |
+| siliconflow | `Qwen/Qwen3-8B` | 免费 | 会先思考，吃额外 token |
+| siliconflow | `tencent/Hunyuan-MT-7B` | 免费 | 翻译专用、最快，但会把指令当正文译 |
+| siliconflow | `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B` | 免费 | 推理模型，不适合翻译 |
+| siliconflow | `Qwen/Qwen2.5-14B-Instruct` | 输入免费 | 输出 ¥0.35/M |
+| zhipu | `glm-4-flash` | **免费·默认** | 稳定，备用通道 |
+| zhipu | `glm-4-flash-250414` | 免费 | 快照版 |
+| zhipu | `glm-4.5-flash` | 免费 | 128K 上下文 |
+| zhipu | `glm-4.7-flash` | 免费 | 200K 上下文，会给思考留 token |
+
+> 智谱的 `/models` 接口**不返回免费模型**（只列 glm-4.5 以上的付费型号），
+> 但 `glm-4-flash` 系列可以直接调。别被接口列表误导。
+
+#### 任何 OpenAI 兼容服务
+
+不需要写代码，面板「设置 → 添加 OpenAI 兼容服务商」填 name / base_url / key / model 即可：
+
+| 预设 | base_url |
+|---|---|
+| DeepSeek | `https://api.deepseek.com/v1` |
+| 百炼 DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| Moonshot | `https://api.moonshot.cn/v1` |
+| Ollama | `http://127.0.0.1:11434/v1` |
+| vLLM | `http://127.0.0.1:8000/v1` |
+
+填完点「测试」，服务会发一个最小请求（`pong`）并返回延迟，确认通不通再保存。
 
 > 免费模型的可用性/额度随时会变。`--engine` 只是 `provider:model`，换模型不用改代码。
 > 引擎层统一走 OpenAI 兼容协议，任何兼容 endpoint（DeepSeek、百炼、Ollama、vLLM）都能直接用。
