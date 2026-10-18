@@ -193,7 +193,7 @@ Windows 上可以用 `plink`/`ssh` 的快捷方式，或者把上面命令写进
 # a) 面板：书库点封面 → 开始翻译
 # b) 命令行（和服务共用同一个库，有任务锁防重复）
 ssh my-server 'cd /srv/slowtrans && sudo -E venv/bin/slowtrans run \
-    --src /srv/books/book.epub --out /srv/slowtrans/data/book.zh.epub'
+    --src /srv/slowtrans/books/book.epub --out /srv/slowtrans/outputs/book.zh.epub'
 # c) HTTP
 curl -X POST http://127.0.0.1:8790/api/v1/jobs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
