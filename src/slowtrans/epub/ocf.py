@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import posixpath
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 
 from lxml import etree
@@ -39,6 +39,8 @@ class Package:
     language: str
     manifest: dict[str, ManifestItem]
     spine: list[str]   # manifest id 列表，按阅读顺序
+    authors: list[str] = field(default_factory=list)
+    cover_href: str = ""
 
 
 def find_opf(zf: zipfile.ZipFile) -> str:
@@ -61,6 +63,9 @@ def read_package(zf: zipfile.ZipFile) -> Package:
     spine_ids: list[str] = []
     title = ""
     language = ""
+    authors: list[str] = []
+    cover_id = ""
+    cover_prop_href = ""
 
     for el in root.iter():
         name = local(el.tag)
@@ -69,13 +74,16 @@ def read_package(zf: zipfile.ZipFile) -> Package:
             if not href:
                 continue
             full = posixpath.normpath(posixpath.join(base, href)) if base else href
+            props = el.get("properties", "")
             item = ManifestItem(
                 id=el.get("id", ""),
                 href=full,
                 media_type=el.get("media-type", ""),
-                properties=el.get("properties", ""),
+                properties=props,
             )
             manifest[item.id] = item
+            if "cover-image" in props:
+                cover_prop_href = full
         elif name == "itemref":
             idref = el.get("idref")
             if idref:
@@ -84,8 +92,18 @@ def read_package(zf: zipfile.ZipFile) -> Package:
             title = (el.text or "").strip()
         elif name == "language" and not language:
             language = (el.text or "").strip()
+        elif name == "creator":
+            who = (el.text or "").strip()
+            if who and who not in authors:
+                authors.append(who)
+        elif name == "meta" and (el.get("name") or "").lower() == "cover":
+            cover_id = el.get("content") or ""
 
-    return Package(opf_path, title, language, manifest, spine_ids)
+    cover_href = cover_prop_href
+    if not cover_href and cover_id and cover_id in manifest:
+        cover_href = manifest[cover_id].href
+
+    return Package(opf_path, title, language, manifest, spine_ids, authors, cover_href)
 
 
 def spine_items(pkg: Package) -> Iterator[tuple[int, ManifestItem]]:

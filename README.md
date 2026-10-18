@@ -27,6 +27,8 @@
 - **结构安全**：`mimetype` 第一且 STORE、内联标签用占位符保护、写完回读自检。
 - **双语对照**：默认输出「原文段 + 译文段」，可 `--mono` 只出译文。
 - **桥接优先**：REST + SSE，AstrBot 插件与面板共用同一套事件。
+- **自带控制台**：书库封面墙（读 epub 元数据 + 抽封面）、任务详情/日志/章节预览、
+  设置页里直接填 API key。单文件、无构建、无 CDN。
 
 ## 快速开始
 
@@ -95,8 +97,19 @@ slowtrans 的做法是**把约定变成持久化状态**：
 
 ```bash
 slowtrans serve --host 127.0.0.1 --port 8790
-# 浏览器打开 http://127.0.0.1:8790/  （内置只读面板）
+# 浏览器打开 http://127.0.0.1:8790/
 ```
+
+面板里有三块：
+
+| 视图 | 作用 |
+|---|---|
+| 书库 | 扫描目录里的 epub，用封面 + 书名展示；点一下就能开工 |
+| 任务 | 进度环、章节完成度、待复核段、事件日志、成品下载、单章预览 |
+| 设置 | 填 API key（只显示掩码）、选默认模型、改书库目录 |
+
+**key 的优先级是「面板里填的 > 环境变量」**：显式操作应该压过部署脚本的默认值。
+面板写入的是 `data/settings.json`（600），接口永远只返回 `sk-abc…wxyz（51 字符）` 这种掩码。
 
 ```
 POST /api/v1/jobs                提交任务（type=translate|convert）
@@ -106,10 +119,22 @@ POST /api/v1/jobs/{id}/pause|resume|cancel
 GET  /api/v1/jobs/{id}/glossary  读术语表
 PUT  /api/v1/jobs/{id}/glossary  改译名（?replan 提示只重译命中段）
 GET  /api/v1/jobs/{id}/events    SSE，支持 Last-Event-ID 续传
+GET  /api/v1/jobs/{id}/log       事件日志（普通 JSON，面板用）
+GET  /api/v1/jobs/{id}/preview   成品某一章的原始 XHTML（iframe 预览）
+GET  /api/v1/library             书库：epub 列表 + 元数据 + 是否已有任务
+GET  /api/v1/library/cover       封面原图（带一天缓存）
+GET  /api/v1/settings            配置视图（key 已掩码）
+PUT  /api/v1/settings            写 key / 默认模型 / 书库目录
 GET  /api/v1/events              全局事件流
 POST /api/v1/hooks               webhook 注册
 GET  /api/v1/artifacts/{id}      下载成品
 GET  /api/v1/health | /capabilities
+```
+
+创建任务既可以用服务器绝对路径，也可以用书库相对路径：
+
+```http
+POST /api/v1/jobs {"type":"translate","rel":"books/dune.epub","lang_to":"zh-CN"}
 ```
 
 **格式转换尚未实现**，接口已预留：

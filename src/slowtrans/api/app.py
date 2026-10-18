@@ -17,22 +17,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import quote
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..config import load_config, parse_engine_spec
 from ..db import DB
 from ..engines.openai_compat import OpenAICompatEngine
+from ..library import cover_bytes, resolve_inside, scan_library
 from ..pipeline import Pipeline, RunOptions
+from ..settings import load_settings, save_settings
 
 TERMINAL = {"done", "failed", "cancelled"}
 
 
 class JobCreate(BaseModel):
     type: str = Field(default="translate", description="translate | convert")
-    src_path: str
+    src_path: str | None = None      # 书库相对路径 rel
+    rel: str | None = None           # 与 src_path 二选一，rel 优先
+
     out_path: str | None = None
     lang_from: str = "en"
     lang_to: str = "zh-CN"
@@ -48,6 +54,12 @@ class GlossaryPut(BaseModel):
     dst: str
     locked: bool = True
     replan: bool = False
+
+
+class SettingsPatch(BaseModel):
+    providers: dict[str, dict] = {}
+    defaults: dict[str, Any] = {}
+    library: dict[str, Any] = {}
 
 
 class HookCreate(BaseModel):
@@ -127,10 +139,18 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
             )
         if body.type != "translate":
             raise HTTPException(400, f"未知任务类型：{body.type}")
-        src = Path(body.src_path).expanduser()
+        if body.rel:
+            try:
+                src = resolve_inside(_lib_root(), body.rel)
+            except (FileNotFoundError, PermissionError) as exc:
+                raise HTTPException(400, f"书库路径无效：{exc}")
+        elif body.src_path:
+            src = Path(body.src_path).expanduser()
+        else:
+            raise HTTPException(400, "必须提供 rel 或 src_path")
         if not src.exists():
             raise HTTPException(400, f"源文件不存在：{src}")
-        cfg = load_config(rt.config_path)
+        cfg = load_config(rt.config_path, rt.data_dir)
         provider, model = parse_engine_spec(
             body.engine or f"{cfg.engine_cfg['provider']}:{cfg.engine_cfg['model']}"
         )
@@ -251,7 +271,108 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
     async def all_events(request: Request, last_id: int = 0):
         return await _sse(db, request, None, last_id)
 
+    # ---------- 书库 ----------
+    def _lib_root() -> Path:
+        s = load_settings(rt.data_dir)
+        return s.library_root(rt.data_dir / "library").resolve()
+
+    @app.get("/api/v1/library", dependencies=[Depends(auth)])
+    async def library(limit: int = 300) -> dict:
+        root = _lib_root()
+        books = scan_library(root, limit=limit)
+        d = db()
+        by_path: dict[str, dict] = {}
+        for r in d.conn.execute("SELECT * FROM jobs"):
+            by_path[str(Path(r["src_path"]).resolve())] = _job_dict(r)
+        items = []
+        for b in books:
+            abs_path = (root / b.rel).resolve()
+            items.append({
+                "rel": b.rel,
+                "name": b.name,
+                "title": b.display,
+                "authors": b.authors,
+                "language": b.language,
+                "size": b.size,
+                "mtime": b.mtime,
+                "cover": f"/api/v1/library/cover?rel={quote(b.rel)}" if b.cover_href else "",
+                "error": b.error,
+                "job": by_path.get(str(abs_path)),
+            })
+        return {"root": str(root), "exists": root.exists(), "books": items}
+
+    @app.get("/api/v1/library/cover", dependencies=[Depends(auth)])
+    async def library_cover(rel: str):
+        try:
+            data, ctype = cover_bytes(_lib_root(), rel, rt.data_dir / "covers")
+        except (FileNotFoundError, PermissionError) as exc:
+            raise HTTPException(404 if isinstance(exc, FileNotFoundError) else 403, str(exc))
+        except LookupError:
+            raise HTTPException(404, "no cover")
+        return Response(content=data, media_type=ctype,
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    # ---------- 设置 ----------
+    @app.get("/api/v1/settings", dependencies=[Depends(auth)])
+    async def get_settings() -> dict:
+        cfg = load_config(rt.config_path, rt.data_dir)
+        s = load_settings(rt.data_dir)
+        data = s.masked(list(cfg.providers))
+        data["effective"] = {
+            "engine": f"{cfg.engine_cfg['provider']}:{cfg.engine_cfg['model']}",
+            "batch_size": cfg.engine_cfg.get("batch_size", 4),
+            "library_root": str(_lib_root()),
+            "data_dir": str(rt.data_dir.resolve()),
+        }
+        return data
+
+    @app.put("/api/v1/settings", dependencies=[Depends(auth)])
+    async def put_settings(body: SettingsPatch) -> dict:
+        s = load_settings(rt.data_dir)
+        save_settings(s, body.model_dump())
+        cfg = load_config(rt.config_path, rt.data_dir)
+        data = load_settings(rt.data_dir).masked(list(cfg.providers))
+        data["note"] = "已保存；新任务立即生效，进行中的任务下一批生效"
+        return data
+
     # ---------- 产物 ----------
+    @app.get("/api/v1/jobs/{jid}/log", dependencies=[Depends(auth)])
+    async def job_log(jid: str, limit: int = 200) -> dict:
+        d = db()
+        d.job(jid)
+        rows = d.conn.execute(
+            "SELECT id,type,ts,data FROM events WHERE job_id=? ORDER BY id DESC LIMIT ?",
+            (jid, limit),
+        ).fetchall()
+        return {"events": [
+            {"seq": r["id"], "event": r["type"], "ts": r["ts"],
+             "data": json.loads(r["data"] or "{}")} for r in rows
+        ][::-1]}
+
+    @app.get("/api/v1/jobs/{jid}/preview", dependencies=[Depends(auth)])
+    async def preview_chapter(jid: str, chapter: int = 0):
+        """返回成品某一章的原始 XHTML，给面板 iframe 直接渲染。
+
+        没有 CSS 也能读——目标是"看看译成什么样"，不是复刻排版。
+        """
+        import zipfile as _zf
+
+        d = db()
+        row = d.job(jid)
+        out = Path(row["out_path"]) if row["out_path"] else None
+        if not out or not out.exists():
+            raise HTTPException(404, "成品还没生成")
+        ch = d.conn.execute(
+            "SELECT href FROM chapters WHERE job_id=? AND idx=?", (jid, chapter)
+        ).fetchone()
+        if not ch:
+            raise HTTPException(404, "没有这一章")
+        with _zf.ZipFile(out) as z:
+            if ch["href"] not in z.namelist():
+                raise HTTPException(404, "成品里没有这一章")
+            data = z.read(ch["href"])
+        return Response(content=data, media_type="application/xhtml+xml")
+
     @app.get("/api/v1/artifacts/{jid}", dependencies=[Depends(auth)])
     async def artifact(jid: str):
         d = db()
@@ -359,7 +480,7 @@ async def _worker(app: FastAPI) -> None:
 
 
 def _run_job(rt: Runtime, jid: str) -> None:
-    cfg = load_config(rt.config_path)
+    cfg = load_config(rt.config_path, rt.data_dir)
     d = DB(rt.data_dir / "slowtrans.db")
     row = d.job(jid)
     if row["state"] in TERMINAL:

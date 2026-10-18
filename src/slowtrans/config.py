@@ -53,9 +53,10 @@ class Provider:
     base_url: str
     api_key_env: str
     api_key: str = ""
+    file_key: str = ""       # 面板里填的 key，优先于环境变量
 
     def key(self) -> str:
-        return self.api_key or os.environ.get(self.api_key_env, "")
+        return self.file_key or self.api_key or os.environ.get(self.api_key_env, "")
 
 
 @dataclass
@@ -86,7 +87,9 @@ class Config:
         return self.data_dir / "slowtrans.db"
 
 
-def load_config(path: str | os.PathLike[str] | None = None) -> Config:
+def load_config(
+    path: str | os.PathLike[str] | None = None, data_dir: str | os.PathLike[str] | None = None
+) -> Config:
     raw: dict[str, Any] = tomllib.loads(DEFAULT_CONFIG)
     if path:
         p = Path(path)
@@ -97,8 +100,19 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         name: Provider(name=name, base_url=v["base_url"], api_key_env=v["api_key_env"])
         for name, v in raw.get("providers", {}).items()
     }
-    data_dir = Path(raw.get("paths", {}).get("data_dir", "data"))
-    return Config(raw=raw, providers=providers, data_dir=data_dir)
+    base_dir = Path(data_dir) if data_dir else Path(raw.get("paths", {}).get("data_dir", "data"))
+    # 面板里填过的设置优先于 TOML 与环境变量：显式操作应该压过默认值
+    from .settings import load_settings
+
+    s = load_settings(base_dir)
+    for name, prov in providers.items():
+        prov.file_key = s.provider_key(name)
+    defaults = s.defaults or {}
+    if defaults.get("provider"):
+        raw.setdefault("engine", {})["provider"] = defaults["provider"]
+    if defaults.get("model"):
+        raw.setdefault("engine", {})["model"] = defaults["model"]
+    return Config(raw=raw, providers=providers, data_dir=base_dir)
 
 
 def _merge(base: dict, overlay: dict) -> dict:

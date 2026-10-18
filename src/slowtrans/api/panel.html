@@ -5,203 +5,671 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>slowtrans</title>
 <style>
-  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#d7dce6; --dim:#8b93a3; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.4px; }
-  header .sp { flex:1; }
-  input, button { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px; }
-  button { cursor:pointer; }
-  button:hover { border-color:var(--acc); }
-  main { padding:18px; display:grid; gap:18px; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-  section > h2 { font-size:13px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-weight:600; display:flex; gap:8px; align-items:center;}
-  .body { padding:12px 14px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--dim); font-weight:500; }
-  tr.job { cursor:pointer; }
-  tr.job:hover { background:#1d222c; }
-  tr.sel { background:#1e2635; }
-  .bar { height:6px; background:#222836; border-radius:99px; overflow:hidden; min-width:80px; }
-  .bar > i { display:block; height:100%; background:var(--acc); }
-  .tag { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
-  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .dim { color:var(--dim); }
-  code, pre { font-family: ui-monospace,Consolas,monospace; font-size:12px; }
-  pre { white-space:pre-wrap; word-break:break-all; margin:0; }
-  #events { max-height:320px; overflow:auto; }
-  .ev { padding:3px 0; border-bottom:1px dashed #1e2430; }
-  .ev b { color:var(--acc); font-weight:500; }
-  .empty { color:var(--dim); padding:8px 0; }
-  input.wide { width:100%; }
-  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  :root{
+    --bg:#0a0c11; --panel:#12151d; --panel2:#171b25; --line:#232838; --line2:#2d3446;
+    --fg:#e6e9f0; --dim:#8b93a7; --accent:#6d8cff; --accent2:#38bdf8;
+    --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --r:14px;
+    --shadow:0 12px 40px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:
+      radial-gradient(1100px 600px at 15% -10%, #16203b 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #131a2b 0%, transparent 50%),
+      var(--bg);
+    color:var(--fg);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#242b3b;border-radius:9px;border:2px solid transparent;background-clip:content-box}
+
+  #app{display:flex;min-height:100vh}
+  /* ---------- sidebar ---------- */
+  .side{
+    width:236px;flex:0 0 236px;border-right:1px solid var(--line);padding:20px 14px;
+    display:flex;flex-direction:column;gap:22px;position:sticky;top:0;height:100vh;
+    background:linear-gradient(180deg,rgba(18,21,29,.9),rgba(10,12,17,.6));backdrop-filter:blur(8px);
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
+  .brand svg{width:26px;height:26px;flex:0 0 26px}
+  .brand b{font-size:15px;letter-spacing:.3px}
+  .brand span{font-size:11px;color:var(--dim);display:block;margin-top:-2px}
+  nav{display:flex;flex-direction:column;gap:4px}
+  .navitem{
+    display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;
+    color:var(--dim);cursor:pointer;border:1px solid transparent;font-size:13.5px;user-select:none;
+  }
+  .navitem:hover{color:var(--fg);background:#151a25}
+  .navitem.on{color:#fff;background:linear-gradient(180deg,#1d2740,#171e2e);border-color:#2b3a5e;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+  .navitem .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:0;margin-left:auto}
+  .navitem.on .dot{opacity:1}
+  .side-foot{margin-top:auto;font-size:11.5px;color:var(--dim);display:flex;flex-direction:column;gap:6px;padding:0 6px}
+  .live{display:flex;align-items:center;gap:7px}
+  .live i{width:7px;height:7px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.15)}
+  .live.ok i{background:var(--ok);box-shadow:0 0 0 3px rgba(74,222,128,.15)}
+
+  /* ---------- main ---------- */
+  main{flex:1;min-width:0;padding:26px 30px 60px;max-width:1500px}
+  .head{display:flex;align-items:flex-end;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+  .head h1{font-size:21px;margin:0;font-weight:650;letter-spacing:.2px}
+  .head p{margin:0;color:var(--dim);font-size:12.5px}
+  .head .sp{flex:1}
+
+  .btn{
+    background:var(--panel2);color:var(--fg);border:1px solid var(--line2);border-radius:10px;
+    padding:8px 14px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;
+    transition:.16s;white-space:nowrap;
+  }
+  .btn:hover{border-color:#3b4664;background:#1c2130;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn.primary{background:linear-gradient(180deg,#3f5cff,#3350e6);border-color:#4160ff;color:#fff;font-weight:550}
+  .btn.primary:hover{background:linear-gradient(180deg,#4b66ff,#3a57ee)}
+  .btn.ghost{background:transparent}
+  .btn.danger:hover{border-color:#7f2b2b;color:#ffb4b4}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .btn.sm{padding:5px 10px;font-size:12px;border-radius:8px}
+
+  /* ---------- library ---------- */
+  .libbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .chip{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:4px 11px;background:#11141c}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:20px}
+  .book{position:relative;cursor:pointer;border-radius:var(--r);transition:.18s}
+  .book:hover{transform:translateY(-4px)}
+  .cover{
+    position:relative;aspect-ratio:2/3;border-radius:12px;overflow:hidden;background:
+      linear-gradient(135deg,#1b2233,#141824);border:1px solid var(--line);
+    box-shadow:0 10px 28px rgba(0,0,0,.4);
+  }
+  .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .cover .ph{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:44px;font-weight:700;color:#2f3a55;background:linear-gradient(160deg,#1a2133,#0f131c);
+  }
+  .cover .veil{
+    position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(6,8,12,.92));
+    opacity:0;transition:.18s;display:flex;align-items:flex-end;padding:12px;
+  }
+  .book:hover .cover .veil{opacity:1}
+  .veil .btn{width:100%;justify-content:center}
+  .badge{
+    position:absolute;top:10px;left:10px;font-size:11px;padding:2px 8px;border-radius:99px;
+    background:rgba(8,10,15,.8);border:1px solid var(--line2);color:var(--dim);backdrop-filter:blur(6px);
+  }
+  .badge.done{color:#bff7d2;border-color:#1f6b42;background:rgba(16,52,36,.85)}
+  .badge.run{color:#ffe6a8;border-color:#7a5a1c;background:rgba(58,42,12,.85)}
+  .badge.fail{color:#ffc2c2;border-color:#7a2c2c;background:rgba(60,20,20,.85)}
+  .bmeta{margin-top:9px}
+  .bmeta b{display:block;font-size:13px;font-weight:580;line-height:1.35;max-height:2.7em;overflow:hidden}
+  .bmeta span{display:block;font-size:11.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---------- jobs ---------- */
+  .split{display:grid;grid-template-columns:330px minmax(0,1fr);gap:20px;align-items:start}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .jrow{
+    border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:11px 13px;cursor:pointer;
+    transition:.15s;display:flex;flex-direction:column;gap:6px;
+  }
+  .jrow:hover{border-color:var(--line2);background:#151a25}
+  .jrow.on{border-color:#3a4f86;background:linear-gradient(180deg,#1a2233,#141924)}
+  .jrow .t{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .jrow .t code{color:var(--dim);font-size:11px}
+  .jrow .name{font-size:13px;font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar{height:5px;border-radius:99px;background:#1d2331;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s}
+  .jrow .sub{font-size:11px;color:var(--dim);display:flex;justify-content:space-between}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .card > h2{
+    margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim);
+    font-weight:600;display:flex;align-items:center;gap:9px;letter-spacing:.3px;
+  }
+  .card > .in{padding:16px}
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px}
+  .kv div span{display:block;font-size:11px;color:var(--dim)}
+  .kv div b{font-size:15px;font-weight:600}
+  .ring{
+    width:74px;height:74px;border-radius:50%;position:relative;flex:0 0 74px;
+    background:conic-gradient(var(--accent) calc(var(--p,0)*1%), #1e2433 0);
+  }
+  .ring::after{content:"";position:absolute;inset:7px;background:var(--panel);border-radius:50%}
+  .ring b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;z-index:1}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #1b2130}
+  th{color:var(--dim);font-weight:500;font-size:11.5px}
+  tbody tr:hover{background:#141a26}
+  .log{
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.7;
+    max-height:260px;overflow:auto;background:#0c0f16;border-radius:10px;padding:10px 12px;
+  }
+  .log .e{display:flex;gap:9px}
+  .log .e .ts{color:#4d566d;flex:0 0 62px}
+  .log .e .ty{color:var(--accent2)}
+  .log .e .dt{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ph-empty{color:var(--dim);font-size:12.5px;padding:10px 0}
+  .dim{color:var(--dim)}
+
+  /* ---------- settings ---------- */
+  .form{display:grid;gap:16px;max-width:760px}
+  .field{display:grid;gap:6px}
+  .field label{font-size:12.5px;color:var(--dim)}
+  .field .hint{font-size:11.5px;color:#66708a}
+  input,select{
+    width:100%;background:#0e121a;border:1px solid var(--line2);border-radius:10px;color:var(--fg);
+    padding:9px 12px;font-size:13px;outline:none;transition:.15s;font-family:inherit;
+  }
+  input:focus,select:focus{border-color:#41579a;box-shadow:0 0 0 3px rgba(109,140,255,.12)}
+  input::placeholder{color:#4d566d}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .prov{border:1px solid var(--line);border-radius:12px;padding:13px 14px;display:grid;gap:8px}
+  .prov .top{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:560}
+  .tag{font-size:10.5px;padding:1px 7px;border-radius:99px;border:1px solid var(--line2);color:var(--dim);font-weight:400}
+  .tag.on{color:#a9f5c4;border-color:#1f6b42;background:rgba(16,52,36,.6)}
+
+  /* ---------- preview & misc ---------- */
+  iframe.prev{width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .toast{
+    position:fixed;right:22px;bottom:22px;z-index:60;display:flex;flex-direction:column;gap:8px;align-items:flex-end;
+  }
+  .toast div{
+    background:#1b2130;border:1px solid var(--line2);border-radius:10px;padding:9px 14px;font-size:12.5px;
+    box-shadow:var(--shadow);animation:in .2s ease;
+  }
+  .toast div.ok{border-color:#22633f;color:#c9f7d8}
+  .toast div.bad{border-color:#7a2c2c;color:#ffc9c9}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .gate{
+    position:fixed;inset:0;z-index:80;background:rgba(6,8,12,.86);backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .gate .box{width:min(420px,90vw);background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:22px;box-shadow:var(--shadow)}
+  .gate h3{margin:0 0 6px;font-size:16px}
+  .gate p{margin:0 0 16px;color:var(--dim);font-size:12.5px}
+  .hidden{display:none!important}
+  .empty{display:grid;place-items:center;gap:10px;padding:70px 0;color:var(--dim);text-align:center}
+  .empty b{color:var(--fg);font-size:15px;font-weight:560}
+  .skel{background:linear-gradient(90deg,#151a25,#1b2130,#151a25);background-size:200% 100%;animation:sh 1.2s infinite;border-radius:10px}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  @media(max-width:980px){
+    .side{width:72px;flex:0 0 72px;padding:16px 8px}
+    .brand b,.brand span,.navitem span,.side-foot{display:none}
+    .navitem{justify-content:center;padding:11px}
+    .split{grid-template-columns:1fr}
+    main{padding:18px}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>slowtrans</h1>
-  <span id="health" class="dim">连接中…</span>
-  <span class="sp"></span>
-  <input id="token" placeholder="Bearer token（可留空）" size="34">
-  <button id="save">保存</button>
-  <button id="refresh">刷新</button>
-</header>
+<div id="app">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#6d8cff"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs>
+        <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 10.5h5"/>
+      </svg>
+      <div><b>slowtrans</b><span>EPUB 慢速翻译</span></div>
+    </div>
+    <nav>
+      <div class="navitem on" data-view="library"><span>书库</span><i class="dot"></i></div>
+      <div class="navitem" data-view="jobs"><span>任务</span><i class="dot"></i></div>
+      <div class="navitem" data-view="settings"><span>设置</span><i class="dot"></i></div>
+    </nav>
+    <div class="side-foot">
+      <div class="live" id="live"><i></i><span id="livetext">连接中…</span></div>
+      <div id="qcount"></div>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
 
-<main>
-  <div style="display:grid;gap:18px;align-content:start">
-    <section>
-      <h2>任务 <span id="jobcount" class="dim"></span></h2>
-      <div class="body" style="padding:0">
-        <table><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>引擎</th></tr></thead>
-        <tbody id="jobs"><tr><td colspan="4" class="empty">暂无任务</td></tr></tbody></table>
-      </div>
-    </section>
+<div class="toast" id="toast"></div>
 
-    <section>
-      <h2>事件流</h2>
-      <div class="body" id="events"><div class="empty">等待事件…</div></div>
-    </section>
+<div class="gate hidden" id="gate">
+  <div class="box">
+    <h3>需要访问令牌</h3>
+    <p>服务开启了鉴权。令牌在服务器 <code>/etc/slowtrans/env</code> 的 <code>SLOWTRANS_TOKEN</code>。</p>
+    <div class="field"><input id="ginput" type="password" placeholder="Bearer token" autocomplete="off"></div>
+    <div style="display:flex;gap:10px;margin-top:14px">
+      <button class="btn primary" id="gsave">保存并进入</button>
+      <button class="btn ghost" id="gskip">服务没设令牌</button>
+    </div>
   </div>
-
-  <div style="display:grid;gap:18px;align-content:start">
-    <section>
-      <h2>详情 <span id="jobid" class="dim"></span></h2>
-      <div class="body" id="detail"><div class="empty">点左侧任务查看</div></div>
-    </section>
-
-    <section>
-      <h2>术语表</h2>
-      <div class="body" id="glossary"><div class="empty">选中任务后加载</div></div>
-    </section>
-  </div>
-</main>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let selected = null, timer = null, lastEventId = 0;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtSize = n => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.round(n/1024)+' KB';
+const pct = s => s && s.total ? Math.round(100*s.done/s.total) : 0;
+const timeago = ts => { if(!ts) return ''; const d=(Date.now()-new Date(ts).getTime())/1000;
+  if(d<60) return '刚刚'; if(d<3600) return Math.round(d/60)+' 分钟前'; if(d<86400) return Math.round(d/3600)+' 小时前'; return Math.round(d/86400)+' 天前'; };
 
-function token() { return localStorage.getItem('slowtrans_token') || ''; }
-function headers() { const h = {'Content-Type':'application/json'}; const t = token(); if (t) h.Authorization = 'Bearer ' + t; return h; }
+const coverCache = new Map();
+const state = { view:'library', library:null, jobs:[], sel:null, settings:null, preview:null, loading:{} };
+let eventSeq = 0, esConn = null;
 
-async function api(path, opt = {}) {
-  const r = await fetch(path, {...opt, headers: headers()});
-  if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
+/* ---------------- 网络 ---------------- */
+function token(){ return localStorage.getItem('st_token') || ''; }
+function headers(json){ const h = json ? {'Content-Type':'application/json'} : {}; const t=token(); if(t) h.Authorization='Bearer '+t; return h; }
+
+async function api(path, opt={}){
+  const res = await fetch(path, {...opt, headers:{...headers(!!opt.body), ...(opt.headers||{})}});
+  if(res.status === 401){ showGate(); throw new Error('未授权'); }
+  if(!res.ok){
+    let msg = res.status + ' ' + res.statusText;
+    try { const j = await res.json(); msg = j.message || j.detail || j.error || msg; } catch {}
+    throw new Error(msg);
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('json') ? res.json() : res.text();
+}
+async function blobUrl(path){
+  const r = await fetch(path, {headers: headers(false)});
+  if(!r.ok) throw new Error('封面加载失败');
+  return URL.createObjectURL(await r.blob());
+}
+function toast(msg, kind=''){
+  const d = document.createElement('div'); d.className = kind; d.textContent = msg;
+  $('#toast').appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transition='.3s'; setTimeout(()=>d.remove(),300); }, 3200);
+}
+function showGate(){ $('#gate').classList.remove('hidden'); $('#ginput').value = token(); setTimeout(()=>$('#ginput').focus(),50); }
+
+/* ---------------- 视图 ---------------- */
+const views = {};
+
+views.library = () => {
+  const L = state.library;
+  if(!L) return skeletonGrid();
+  const books = L.books || [];
+  return `
+    <div class="head">
+      <div><h1>书库</h1><p>${esc(L.root)} ${L.exists ? `· ${books.length} 本` : '· 目录不存在'}</p></div>
+      <div class="sp"></div>
+      <button class="btn" data-act="scan">重新扫描</button>
+      <button class="btn primary" data-act="go-settings">书库设置</button>
+    </div>
+    ${!L.exists ? `<div class="empty"><b>书库目录不存在</b><span>去「设置」里填一个存在的目录，比如 <code>/srv/webdav/data</code></span></div>` : ''}
+    ${L.exists && !books.length ? `<div class="empty"><b>这个目录里没有 epub</b><span>${esc(L.root)}</span></div>` : ''}
+    <div class="grid">${books.map(bookCard).join('')}</div>`;
+};
+
+function bookCard(b){
+  const j = b.job;
+  const st = j ? j.state : '';
+  const badge = j ? `<span class="badge ${st==='done'?'done':st==='failed'?'fail':'run'}">${esc(stateName(st))}</span>` : '';
+  return `
+  <div class="book" data-rel="${esc(b.rel)}" data-act="openbook">
+    <div class="cover">
+      ${b.cover ? `<img data-cover="${esc(b.cover)}" alt="">` : `<div class="ph">${esc((b.title||b.name).slice(0,1).toUpperCase())}</div>`}
+      ${badge}
+      <div class="veil"><button class="btn primary sm" data-rel="${esc(b.rel)}" data-act="startbook">${j ? '查看任务' : '开始翻译'}</button></div>
+    </div>
+    <div class="bmeta">
+      <b title="${esc(b.title)}">${esc(b.title)}</b>
+      <span>${esc((b.authors||[]).join('、') || '未知作者')} · ${fmtSize(b.size)}</span>
+    </div>
+  </div>`;
 }
 
-function pct(s) { return s.total ? Math.round(100 * s.done / s.total) : 0; }
+views.jobs = () => {
+  const jobs = state.jobs;
+  return `
+    <div class="head">
+      <div><h1>任务</h1><p>${jobs.length ? jobs.length + ' 个任务' : '还没有任务'}</p></div>
+      <div class="sp"></div>
+      <button class="btn" data-act="loadjobs">刷新</button>
+    </div>
+    ${!jobs.length ? `<div class="empty"><b>还没有翻译任务</b><span>去「书库」挑一本书开始</span></div>` : `
+    <div class="split">
+      <div class="list">${jobs.map(jobRow).join('')}</div>
+      <div id="jdetail">${state.sel ? '' : `<div class="empty"><b>选一个任务</b><span>看进度、章节、日志和成品</span></div>`}</div>
+    </div>`}`;
+};
 
-async function loadHealth() {
-  try { const h = await api('/api/v1/health'); $('#health').textContent = `v${h.version} · 队列 ${h.queue}`; $('#health').className = 'ok'; }
-  catch (e) { $('#health').textContent = '未连接：' + e.message; $('#health').className = 'bad'; }
+function stateName(s){
+  return {created:'已创建',queued:'排队中',segmenting:'分段中',analyzing:'分析中',translating:'翻译中',
+          verifying:'校验中',paused:'已暂停',done:'已完成',failed:'失败',cancelled:'已取消',
+          awaiting_review:'待确认'}[s] || s || '未知';
 }
 
-async function loadJobs() {
-  const jobs = await api('/api/v1/jobs?limit=30');
-  $('#jobcount').textContent = `(${jobs.length})`;
-  if (!jobs.length) { $('#jobs').innerHTML = '<tr><td colspan="4" class="empty">暂无任务</td></tr>'; return; }
-  $('#jobs').innerHTML = jobs.map(j => {
-    const s = j.segments, p = pct(s);
-    const cls = j.state === 'done' ? 'ok' : (j.state === 'failed' ? 'bad' : 'warn');
-    return `<tr class="job ${j.job_id === selected ? 'sel' : ''}" data-id="${esc(j.job_id)}">
-      <td><code>${esc(j.job_id)}</code><br><span class="dim">${esc(j.src_path.split(/[\\/]/).pop())}</span></td>
-      <td class="${cls}">${esc(j.state)}</td>
-      <td><div class="bar"><i style="width:${p}%"></i></div><span class="dim">${s.done}/${s.total}${s.review ? ` · 待复核 ${s.review}` : ''}</span></td>
-      <td><span class="tag">${esc(j.engine)}</span></td></tr>`;
-  }).join('');
-  document.querySelectorAll('tr.job').forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));
+function jobRow(j){
+  const s = j.segments, p = pct(s);
+  return `
+  <div class="jrow ${state.sel===j.job_id?'on':''}" data-id="${esc(j.job_id)}" data-act="seljob">
+    <div class="t"><span class="tag">${esc(j.engine.split(':').pop())}</span><code>${esc(j.job_id)}</code></div>
+    <div class="name">${esc(j.src_path.split(/[\\/]/).pop())}</div>
+    <div class="bar"><i style="width:${p}%"></i></div>
+    <div class="sub"><span>${stateName(j.state)} · ${s.done}/${s.total}</span><span>${p}%${s.review?` · 复核 ${s.review}`:''}</span></div>
+  </div>`;
 }
 
-async function selectJob(id) {
-  selected = id;
-  await loadJobs();
-  $('#jobid').textContent = id;
-  try {
-    const j = await api('/api/v1/jobs/' + id);
-    const s = j.segments;
-    const chapters = j.chapters.map(c => `<tr><td>${c.idx + 1}</td><td>${esc(c.title || c.href)}</td>
-      <td>${c.seg_done}/${c.seg_total}</td></tr>`).join('');
-    const review = (j.review || []).map(r => `<tr><td>${r.chapter_idx + 1}</td><td><code>${esc(r.src_text.slice(0, 60))}</code></td>
-      <td class="warn">${esc(r.error)}</td></tr>`).join('');
-    $('#detail').innerHTML = `
-      <div class="row"><span class="tag">${esc(j.engine)}</span><span class="tag">${esc(j.lang_from)} → ${esc(j.lang_to)}</span>
-        <span class="tag">tokens ${j.tokens.in}/${j.tokens.out}</span></div>
-      <div class="bar" style="height:10px"><i style="width:${pct(s)}%"></i></div>
-      <p class="dim">${s.done}/${s.total} 段 · 待复核 ${s.review} · 失败 ${s.failed} · ${pct(s)}%</p>
+views.settings = () => {
+  const st = state.settings;
+  if(!st) return `<div class="head"><div><h1>设置</h1></div></div><div class="skel" style="height:180px"></div>`;
+  const provs = ['siliconflow','zhipu'];
+  const names = {siliconflow:'硅基流动', zhipu:'智谱 AI'};
+  return `
+  <div class="head"><div><h1>设置</h1><p>填一次就够，新任务立即生效</p></div></div>
+  <form class="form" id="settingsForm">
+    <div class="card"><h2>API KEY</h2><div class="in" style="display:grid;gap:14px">
+      ${provs.map(p=>{
+        const info = st.providers[p] || {};
+        return `<div class="prov">
+          <div class="top">${names[p]}
+            <span class="tag ${info.configured||info.source==='env'?'on':''}">
+              ${info.configured ? '已配置 '+esc(info.hint) : (info.source==='env' ? '来自环境变量' : '未配置')}
+            </span>
+          </div>
+          <input type="password" name="key_${p}" placeholder="${info.configured?'留空则不修改':'粘贴 '+names[p]+' 的 API Key'}" autocomplete="off">
+          <div class="hint">只写入 <code>data/settings.json</code>（600 权限），接口永远只返回掩码。</div>
+        </div>`;
+      }).join('')}
+    </div></div>
+
+    <div class="card"><h2>默认引擎</h2><div class="in" style="display:grid;gap:14px">
       <div class="row">
-        <button data-act="resume">继续</button>
-        <button data-act="pause">暂停</button>
-        <button data-act="artifact">下载成品</button>
+        <div class="field"><label>服务商</label>
+          <select name="provider" id="provsel">
+            <option value="siliconflow">硅基流动</option>
+            <option value="zhipu">智谱 AI</option>
+          </select></div>
+        <div class="field"><label>模型</label>
+          <input name="model" list="models" placeholder="Qwen/Qwen2.5-7B-Instruct">
+          <datalist id="models">
+            <option>Qwen/Qwen2.5-7B-Instruct</option>
+            <option>THUDM/GLM-4-9B-0414</option>
+            <option>tencent/Hunyuan-MT-7B</option>
+            <option>Qwen/Qwen3-8B</option>
+            <option>glm-4-flash</option>
+          </datalist></div>
       </div>
-      <details><summary class="dim">章节（${j.chapters.length}）</summary><table>${chapters}</table></details>
-      ${review ? `<details open><summary class="warn">待复核段落（${j.review.length}）</summary><table>${review}</table></details>` : ''}
-      ${j.error ? `<p class="bad">${esc(j.error)}</p>` : ''}`;
-    document.querySelectorAll('#detail button').forEach(b => b.onclick = () => act(b.dataset.act, id));
-    loadGlossary(id);
-  } catch (e) { $('#detail').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+      <div class="hint">硅基流动上托管的 Qwen/GLM/Hunyuan 都用同一个 key；换模型不用换 key。</div>
+      <div class="row">
+        <div class="field"><label>源语言</label><select name="lang_from">
+          <option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option></select></div>
+        <div class="field"><label>目标语言</label><select name="lang_to">
+          <option value="zh-CN">简体中文</option><option value="zh-TW">繁体中文</option></select></div>
+      </div>
+    </div></div>
+
+    <div class="card"><h2>书库</h2><div class="in" style="display:grid;gap:10px">
+      <div class="field"><label>书库目录</label>
+        <input name="libroot" placeholder="${esc(st.effective.library_root)}" value="${esc(st.library.root||'')}">
+        <div class="hint">服务器上放 epub 的目录，例如 <code>/srv/webdav/data</code>；默认 <code>${esc(st.effective.library_root)}</code></div>
+      </div>
+      <div class="hint">数据目录：<code>${esc(st.effective.data_dir)}</code> · 当前引擎：<code>${esc(st.effective.engine)}</code></div>
+    </div></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn primary" type="submit">保存设置</button>
+      <button class="btn" type="button" data-act="loadsettings">撤销修改</button>
+    </div>
+  </form>`;
+};
+
+function skeletonGrid(){
+  return `<div class="head"><div><h1>书库</h1><p>读取中…</p></div></div>
+  <div class="grid">${Array.from({length:8}).map(()=>`<div class="skel" style="aspect-ratio:2/3"></div>`).join('')}</div>`;
 }
 
-async function act(a, id) {
-  if (a === 'artifact') { window.open('/api/v1/artifacts/' + id, '_blank'); return; }
-  try { await api(`/api/v1/jobs/${id}/${a}`, {method: 'POST'}); await selectJob(id); }
-  catch (e) { alert(e.message); }
+/* ---------------- 任务详情 ---------------- */
+async function renderDetail(){
+  if(!state.sel) return;
+  const box = $('#jdetail'); if(!box) return;
+  let j;
+  try { j = await api('/api/v1/jobs/'+state.sel); } catch(e){ box.innerHTML = `<div class="card"><div class="in">${esc(e.message)}</div></div>`; return; }
+  const s = j.segments, p = pct(s);
+  const canResume = ['paused','failed','cancelled','queued','created','awaiting_review'].includes(j.state);
+  const canPause = ['translating','analyzing','segmenting'].includes(j.state);
+  const chapters = (j.chapters||[]).map(c=>`<tr>
+      <td style="width:44px;color:var(--dim)">${c.idx+1}</td>
+      <td>${esc(c.title||c.href)}</td>
+      <td style="width:110px"><div class="bar"><i style="width:${c.seg_total?Math.round(100*c.seg_done/c.seg_total):0}%"></i></div></td>
+      <td style="width:74px;color:var(--dim)">${c.seg_done}/${c.seg_total}</td>
+      <td style="width:60px"><button class="btn sm ghost" data-act="preview" data-ch="${c.idx}">预览</button></td>
+    </tr>`).join('');
+  box.innerHTML = `
+  <div class="card" style="margin-bottom:16px"><div class="in" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+    <div class="ring" style="--p:${p}"><b>${p}%</b></div>
+    <div style="flex:1;min-width:220px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:4px">${esc(j.src_path.split(/[\\/]/).pop())}</div>
+      <div style="color:var(--dim);font-size:12px;margin-bottom:10px">
+        ${esc(j.engine)} · ${esc(j.lang_from)} → ${esc(j.lang_to)} · ${stateName(j.state)}
+      </div>
+      <div class="kv">
+        <div><span>已完成</span><b>${s.done} / ${s.total}</b></div>
+        <div><span>待复核</span><b style="color:${s.review?'var(--warn)':'inherit'}">${s.review}</b></div>
+        <div><span>失败</span><b style="color:${s.failed?'var(--bad)':'inherit'}">${s.failed}</b></div>
+        <div><span>tokens</span><b>${j.tokens.in}/${j.tokens.out}</b></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${canPause?`<button class="btn" data-act="pause">暂停</button>`:''}
+      ${canResume?`<button class="btn primary" data-act="resume">继续</button>`:''}
+      <button class="btn" data-act="download">下载成品</button>
+    </div>
+  </div></div>
+
+  <div class="card" style="margin-bottom:16px"><h2>章节 <span class="dim">${(j.chapters||[]).length}</span></h2>
+    <div class="in" style="padding:0;max-height:300px;overflow:auto"><table><tbody>${chapters||'<tr><td>还没有章节</td></tr>'}</tbody></table></div>
+  </div>
+
+  ${(j.review||[]).length?`<div class="card" style="margin-bottom:16px"><h2>待复核（保留原文）</h2>
+    <div class="in" style="padding:0"><table><tbody>${j.review.map(r=>`<tr>
+      <td style="width:70px;color:var(--dim)">第 ${r.chapter_idx+1} 章</td>
+      <td style="font-size:12px">${esc(String(r.src_text).slice(0,90))}</td>
+      <td style="color:var(--warn);width:150px">${esc(r.error)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+
+  <div class="card" style="margin-bottom:16px"><h2>日志</h2>
+    <div class="in"><div class="log" id="jlog">读取中…</div></div></div>
+
+  <div class="card hidden" id="prevcard"><h2>章节预览 <button class="btn sm" data-act="closepreview" style="margin-left:auto">关闭</button></h2>
+    <div class="in"><iframe class="prev" id="prevframe" sandbox></iframe></div></div>`;
+
+  loadLog();
 }
 
-async function loadGlossary(id) {
-  try {
-    const g = await api(`/api/v1/jobs/${id}/glossary`);
-    if (!g.terms.length) { $('#glossary').innerHTML = '<div class="empty">术语表为空（可能还没跑分析阶段）</div>'; return; }
-    $('#glossary').innerHTML = `<p class="dim">版本 ${g.version} · 共 ${g.terms.length} 条。改完点保存，只会重译命中旧译名的段落。</p>` +
-      g.terms.map(t => `<div class="row"><code>${esc(t.src)}</code>→<input class="wide" data-src="${esc(t.src)}" value="${esc(t.dst)}"></div>`).join('') +
-      `<button id="saveg">保存术语表</button>`;
-    $('#saveg').onclick = async () => {
-      const inputs = document.querySelectorAll('#glossary input');
-      for (const inp of inputs) {
-        await api(`/api/v1/jobs/${id}/glossary`, {method: 'PUT',
-          body: JSON.stringify({src: inp.dataset.src, dst: inp.value, locked: true})});
-      }
-      await loadGlossary(id);
-    };
-  } catch (e) { $('#glossary').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+async function loadLog(){
+  const box = $('#jlog'); if(!box) return;
+  try{
+    const d = await api('/api/v1/jobs/'+state.sel+'/log?limit=120');
+    box.innerHTML = d.events.length ? d.events.map(e=>{
+      const extra = e.data && (e.data.done!==undefined ? ` ${e.data.done}/${e.data.total||'?'}` : (e.data.out?` ${e.data.out}`:''));
+      return `<div class="e"><span class="ts">${esc((e.ts||'').slice(11,19))}</span>
+        <span class="ty">${esc(e.event)}</span><span class="dt">${esc(extra)}</span></div>`;
+    }).join('') : '<span class="ph-empty">暂无事件</span>';
+    box.scrollTop = box.scrollHeight;
+  }catch(e){ box.textContent = e.message; }
 }
 
-function connectEvents() {
-  try {
-    const es = new EventSource('/api/v1/events' + (lastEventId ? '?last_id=' + lastEventId : ''));
-    es.onmessage = e => pushEvent(JSON.parse(e.data));
-    ['job.completed','job.failed','job.needs_review','progress','job.translating'].forEach(t =>
-      es.addEventListener(t, e => pushEvent(JSON.parse(e.data))));
-    es.onerror = () => { es.close(); setTimeout(connectEvents, 5000); };
-  } catch {}
+async function previewChapter(ch){
+  const frame = $('#prevframe'); const card = $('#prevcard');
+  card.classList.remove('hidden');
+  try{
+    const html = await api(`/api/v1/jobs/${state.sel}/preview?chapter=${ch}`);
+    const style = `<style>body{font:16px/1.8 -apple-system,"Noto Sans SC",sans-serif;color:#1a1d24;background:#fff;margin:24px;max-width:820px}
+      .st-src{color:#8a90a0;font-size:14px;border-left:2px solid #e5e7ee;padding-left:12px;margin:10px 0}
+      .st-src + *{margin-top:2px}</style>`;
+    frame.srcdoc = html.includes('<head>') ? html.replace('</head>', style+'</head>') : style+html;
+    card.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }catch(e){ toast(e.message,'bad'); }
 }
 
-function pushEvent(p) {
-  lastEventId = Math.max(lastEventId, p.seq || 0);
-  const box = $('#events');
-  if (box.querySelector('.empty')) box.innerHTML = '';
-  const d = p.data || {};
-  const extra = d.total ? ` ${d.done}/${d.total}` : (d.out ? ' ' + d.out : '');
-  box.insertAdjacentHTML('afterbegin', `<div class="ev"><span class="dim">${esc((p.ts || '').slice(11, 19))}</span>
-    <b>${esc(p.event)}</b> <span class="dim">${esc(p.job_id)}</span>${esc(extra)}</div>`);
-  while (box.children.length > 80) box.lastChild.remove();
+/* ---------------- 渲染 ---------------- */
+function render(){
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('on', n.dataset.view===state.view));
+  const main = $('#main');
+  main.innerHTML = views[state.view]();
+  if(state.view==='settings') fillSettings();
+  if(state.view==='jobs' && state.sel) renderDetail();
+  loadCovers();
 }
 
-$('#save').onclick = () => { localStorage.setItem('slowtrans_token', $('#token').value.trim()); refresh(); };
-$('#refresh').onclick = () => refresh();
-$('#token').value = token();
+function fillSettings(){
+  const st = state.settings; if(!st) return;
+  const f = $('#settingsForm'); if(!f) return;
+  const eff = String(st.effective?.engine || '').split(':');
+  f.provider.value = st.defaults.provider || eff[0] || 'siliconflow';
+  f.model.value = st.defaults.model || eff.slice(1).join(':') || '';
+  f.lang_from.value = st.defaults.lang_from || 'en';
+  f.lang_to.value = st.defaults.lang_to || 'zh-CN';
+  f.libroot.value = st.library.root || '';
+}
 
-async function refresh() {
+async function loadCovers(){
+  for(const img of document.querySelectorAll('img[data-cover]')){
+    if(img.dataset.done) continue;
+    img.dataset.done = '1';
+    const path = img.dataset.cover;
+    try{
+      if(!coverCache.has(path)) coverCache.set(path, await blobUrl(path));
+      img.src = coverCache.get(path);
+    }catch{
+      const d=document.createElement('div'); d.className='ph'; d.textContent='?'; img.replaceWith(d);
+    }
+  }
+}
+
+/* ---------------- 数据加载 ---------------- */
+async function loadHealth(){
+  try{
+    const h = await api('/api/v1/health');
+    $('#live').classList.add('ok');
+    $('#livetext').textContent = 'v'+h.version;
+    const q = Object.entries(h.jobs||{}).map(([k,v])=>`${stateName(k)} ${v}`).join(' · ');
+    $('#qcount').textContent = q;
+  }catch(e){
+    $('#live').classList.remove('ok');
+    $('#livetext').textContent = '未连接';
+  }
+}
+async function loadLibrary(force){
+  if(state.library && !force) return;
+  state.loading.library = true;
+  try{ state.library = await api('/api/v1/library'); }
+  catch(e){ toast('书库读取失败：'+e.message,'bad'); state.library = {root:'',exists:false,books:[]}; }
+  finally{ state.loading.library = false; }
+}
+async function loadJobs(){
+  try{ state.jobs = await api('/api/v1/jobs?limit=50'); }catch(e){ state.jobs=[]; }
+}
+async function loadSettings(force){
+  if(state.settings && !force) return;
+  state.settings = await api('/api/v1/settings');
+}
+
+/* ---------------- 动作 ---------------- */
+async function startBook(rel){
+  const st = state.settings || {};
+  const langTo = st.defaults?.lang_to || 'zh-CN';
+  try{
+    const r = await api('/api/v1/jobs', {method:'POST', body: JSON.stringify({
+      type:'translate', rel, lang_to: langTo, bilingual: true
+    })});
+    toast('已加入队列：'+r.job_id,'ok');
+    await loadJobs(); await loadLibrary(true);
+    state.view='jobs'; state.sel=r.job_id; render();
+  }catch(e){ toast('提交失败：'+e.message,'bad'); }
+}
+
+async function jobAction(act){
+  const id = state.sel; if(!id) return;
+  try{
+    if(act==='download'){ window.open('/api/v1/artifacts/'+id, '_blank'); return; }
+    await api(`/api/v1/jobs/${id}/${act}`, {method:'POST'});
+    toast(act==='pause'?'已暂停（当前批次结束后生效）':'已重新排队','ok');
+    await loadJobs(); await renderDetail();
+  }catch(e){ toast(e.message,'bad'); }
+}
+
+/* ---------------- 事件 ---------------- */
+document.addEventListener('click', async ev => {
+  const nav = ev.target.closest('.navitem');
+  if(nav){ state.view = nav.dataset.view; if(state.view==='library') await loadLibrary(); render(); return; }
+
+  const t = ev.target.closest('[data-act]');
+  if(!t) return;
+  const act = t.dataset.act;
+
+  if(act==='scan'){ await loadLibrary(true); render(); toast('已重新扫描'); }
+  else if(act==='go-settings'){ state.view='settings'; await loadSettings(); render(); }
+  else if(act==='loadjobs'){ await loadJobs(); render(); }
+  else if(act==='loadsettings'){ await loadSettings(true); render(); }
+  else if(act==='openbook'){ await openBook(t.dataset.rel); }
+  else if(act==='startbook'){ ev.stopPropagation(); await startBook(t.dataset.rel); }
+  else if(act==='seljob'){ state.sel = t.dataset.id; render(); }
+  else if(act==='pause'||act==='resume'){ await jobAction(act); }
+  else if(act==='download'){ await jobAction('download'); }
+  else if(act==='preview'){ await previewChapter(+t.dataset.ch); }
+  else if(act==='closepreview'){ $('#prevcard').classList.add('hidden'); }
+});
+
+async function openBook(rel){
+  const b = (state.library?.books||[]).find(x=>x.rel===rel);
+  if(!b) return;
+  if(b.job){
+    state.view='jobs'; state.sel=b.job.job_id; await loadJobs(); render(); return;
+  }
+  await startBook(rel);
+}
+
+document.addEventListener('submit', async ev => {
+  if(ev.target.id!=='settingsForm') return;
+  ev.preventDefault();
+  const f = ev.target;
+  const body = { providers:{}, defaults:{}, library:{} };
+  for(const p of ['siliconflow','zhipu']){
+    const v = f['key_'+p].value.trim();
+    if(v) body.providers[p] = {api_key:v};
+  }
+  body.defaults = { provider:f.provider.value, model:f.model.value.trim(),
+                    lang_from:f.lang_from.value, lang_to:f.lang_to.value };
+  body.library = { root: f.libroot.value.trim() };
+  try{
+    state.settings = await api('/api/v1/settings', {method:'PUT', body:JSON.stringify(body)});
+    toast('设置已保存','ok');
+    state.library = null; await loadLibrary(true); render();
+  }catch(e){ toast('保存失败：'+e.message,'bad'); }
+});
+
+$('#gsave').onclick = () => { localStorage.setItem('st_token', $('#ginput').value.trim()); $('#gate').classList.add('hidden'); boot(); };
+$('#gskip').onclick = () => { localStorage.setItem('st_token',''); $('#gate').classList.add('hidden'); boot(); };
+$('#ginput').addEventListener('keydown', e => { if(e.key==='Enter') $('#gsave').click(); });
+
+/* ---------------- 启动 ---------------- */
+function connectEvents(){
+  try{
+    if(esConn){ esConn.close(); esConn = null; }
+    const url = '/api/v1/events' + (eventSeq?`?last_id=${eventSeq}`:'');
+    const es = new EventSource(url); esConn = es;
+    const on = e => { try{ const p=JSON.parse(e.data); eventSeq=Math.max(eventSeq,p.seq||0);
+      if(['job.completed','job.failed','job.paused'].includes(p.event)){ loadJobs().then(()=>{ if(state.view==='jobs') render(); }); }
+      if(state.view==='jobs' && state.sel && p.job_id===state.sel && p.event.includes('progress')) loadLog();
+    }catch{} };
+    es.onmessage = on;
+    ['job.completed','job.failed','job.paused','progress','job.translating'].forEach(t=>es.addEventListener(t,on));
+    es.onerror = () => { es.close(); if(esConn===es) esConn=null; setTimeout(connectEvents, 6000); };
+  }catch{}
+}
+
+async function boot(){
   await loadHealth();
-  try { await loadJobs(); } catch (e) { $('#jobs').innerHTML = `<tr><td colspan="4" class="bad">${esc(e.message)}</td></tr>`; }
-  if (selected) { try { await selectJob(selected); } catch {} }
+  try{
+    await loadSettings();
+    if(state.view==='library') await loadLibrary(true);
+  }catch(e){
+    if(!token()) showGate();
+  }
+  render();
+  connectEvents();
+  setInterval(()=>{ loadHealth(); }, 15000);
+  setInterval(async ()=>{ if(state.view==='library'){ await loadLibrary(true); render(); }
+                          if(state.view==='jobs'){ await loadJobs(); if(!state.sel) render(); } }, 20000);
 }
-
-refresh();
-connectEvents();
-timer = setInterval(refresh, 5000);
+boot();
 </script>
 </body>
 </html>

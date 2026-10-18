@@ -66,7 +66,7 @@ def _build_engine(cfg, spec: str, args):
 
 
 def cmd_run(args) -> int:
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, args.data)
     src = Path(args.src)
     if not src.exists():
         raise SystemExit(f"找不到输入文件：{src}")
