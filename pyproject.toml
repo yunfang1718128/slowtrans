@@ -31,11 +31,11 @@ api = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.urls]
-# 上传前把 YOUR-NAME 换成你的 GitHub 用户名
-Homepage = "https://github.com/YOUR-NAME/slowtrans"
-Repository = "https://github.com/YOUR-NAME/slowtrans"
-Issues = "https://github.com/YOUR-NAME/slowtrans/issues"
-Changelog = "https://github.com/YOUR-NAME/slowtrans/blob/main/CHANGELOG.md"
+# 上传前把 yunfang1718128 换成你的 GitHub 用户名
+Homepage = "https://github.com/yunfang1718128/slowtrans"
+Repository = "https://github.com/yunfang1718128/slowtrans"
+Issues = "https://github.com/yunfang1718128/slowtrans/issues"
+Changelog = "https://github.com/yunfang1718128/slowtrans/blob/main/CHANGELOG.md"
 
 [tool.ruff]
 line-length = 100
