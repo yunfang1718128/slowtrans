@@ -473,8 +473,10 @@ async function renderDetail(){
   let j;
   try { j = await api('/api/v1/jobs/'+state.sel); } catch(e){ box.innerHTML = `<div class="card"><div class="in">${esc(e.message)}</div></div>`; return; }
   const s = j.segments, p = pct(s);
-  const canResume = ['paused','failed','cancelled','queued','created','awaiting_review'].includes(j.state);
+  // 「继续」只在真的停住时出现。queued/created 是"已经在排队"，不该给继续按钮。
+  const canResume = ['paused','failed','cancelled','awaiting_review'].includes(j.state);
   const canPause = ['translating','analyzing','segmenting'].includes(j.state);
+  const isQueued = ['queued','created'].includes(j.state);
   const canAbort = ['translating','analyzing','segmenting','queued','cancelling'].includes(j.state);
   const comp = j.completeness || {};
   const chapters = (j.chapters||[]).map(c=>`<tr>
@@ -501,6 +503,7 @@ async function renderDetail(){
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
+      ${isQueued?`<div style="font-size:12px;color:var(--dim);padding:4px 2px">排队中，等待 worker…</div>`:''}
       ${canPause?`<button class="btn" data-act="pause">暂停</button>`:''}
       ${canResume?`<button class="btn primary" data-act="resume">继续</button>`:''}
       ${canAbort?`<button class="btn danger" data-act="abort" title="停止并删除这个任务的所有记录和成品">终止</button>`

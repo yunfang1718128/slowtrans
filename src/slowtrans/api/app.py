@@ -90,6 +90,7 @@ class Runtime:
     queue: asyncio.Queue
     stop_flags: dict[str, threading.Event]
     abort_flags: dict[str, threading.Event]
+    queued: set[str]
     worker: asyncio.Task | None = None
     token: str = ""
 
@@ -102,6 +103,7 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         queue=asyncio.Queue(),
         stop_flags={},
         abort_flags={},
+        queued=set(),
         token=os.environ.get("SLOWTRANS_TOKEN", ""),
     )
 
@@ -110,6 +112,9 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         validate_config(load_config(rt.config_path, rt.data_dir))
         with DB(rt.data_dir / "slowtrans.db") as d:
             d.prune()          # 每次启动清一次过期事件/缓存
+            stale = d.clear_stale_locks(socket.gethostname())
+            if stale:
+                print(f"[slowtrans] 清理了 {stale} 个本机残留任务锁")
         rt.worker = asyncio.create_task(_worker(app))
         try:
             yield
@@ -222,8 +227,20 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
             budget_cny=body.budget_cny,
             bilingual=body.bilingual,
         )
+        # 防重复提交：正在跑的任务不能被"开始翻译/继续"打回 queued，
+        # 否则状态会变成"排队中"而实际在翻译，还会在队列里排第二份。
+        if jid in rt.queued:
+            return JSONResponse(status_code=200, content={"job_id": jid, "state": "queued", "note": "已在队列中"})
+        held, _ = d.job_lock(jid)
+        if held:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "already_running", "job_id": jid,
+                         "message": "这个任务正在运行，不用重复提交"},
+            )
         d.mark_queued(jid)
         d.event(jid, "job.queued", {"type": "translate"})
+        rt.queued.add(jid)
         await rt.queue.put(jid)
         return JSONResponse(status_code=202, content={"job_id": jid, "state": "queued"})
 
@@ -261,7 +278,10 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         abort = rt.abort_flags.get(jid)
         if abort:
             abort.clear()
+        if jid in rt.queued:
+            return {"job_id": jid, "state": "queued", "model": row["model"], "note": "已在队列中"}
         d.mark_queued(jid)
+        rt.queued.add(jid)
         await rt.queue.put(jid)
         return {"job_id": jid, "state": "queued", "model": row["model"]}
 
@@ -698,6 +718,7 @@ async def _worker(app: FastAPI) -> None:
     rt: Runtime = app.state.rt
     while True:
         jid = await rt.queue.get()
+        rt.queued.discard(jid)
         try:
             await asyncio.to_thread(_run_job, rt, jid)
         except JobAborted:

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -91,6 +92,7 @@ class Pipeline:
         self.log = log
         self.should_stop = should_stop
         self.should_abort = should_abort
+        self.owner = opts.owner or f"{socket.gethostname()}:{os.getpid()}"
         self.stats = Stats()
         self.jid = job_id_for(opts.src, opts.lang_from, opts.lang_to, provider, model)
         self.href_by_idx: dict[int, str] = {}
@@ -245,6 +247,8 @@ class Pipeline:
             chapter_started = time.time()
             for batch in _batches(todo, o.batch_size):
                 self._check_abort()
+                # 长任务必须给锁续期，否则 15 分钟后会被判"过期"而让第二个进程抢进来
+                self.db.touch_lock(self.jid, self.owner)
                 if o.window and not self._wait_for_window():
                     return
                 if self.should_stop and self.should_stop():
@@ -498,15 +502,14 @@ class Pipeline:
     # ---------------- 总控 ----------------
     def run(self) -> Stats:
         self._ensure_job()
-        owner = self.opts.owner or f"pid-{os.getpid()}"
-        if not self.db.try_lock(self.jid, owner):
+        if not self.db.try_lock(self.jid, self.owner):
             held, at = self.db.job_lock(self.jid)
             self.log(f"跳过：任务正被 {held or '另一个进程'} 处理（锁自 {at}）")
             return self.stats
         try:
             return self._run_locked()
         finally:
-            self.db.release_lock(self.jid, owner)
+            self.db.release_lock(self.jid, self.owner)
 
     def _ensure_job(self) -> None:
         o = self.opts

@@ -374,6 +374,14 @@ class DB:
         )
         return cur.rowcount == 1
 
+    def clear_stale_locks(self, hostname: str) -> int:
+        """进程被 kill 时锁不会自动释放，启动时清理本机的残留锁。"""
+        cur = self.conn.execute(
+            "UPDATE jobs SET locked_by=NULL, locked_at=NULL WHERE locked_by LIKE ?",
+            (f"{hostname}:%",),
+        )
+        return cur.rowcount
+
     def touch_lock(self, jid: str, owner: str) -> None:
         self.conn.execute(
             "UPDATE jobs SET locked_at=? WHERE id=? AND locked_by=?", (now(), jid, owner)
