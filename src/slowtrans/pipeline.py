@@ -26,6 +26,10 @@ from .epub.segment import PH_RE, detach_affixes, placeholders_of, segment_chapte
 from .glossary import extract_candidates
 
 
+class JobAborted(Exception):
+    """用户点了「立即终止」。与 pause 的区别：不保存当前批次，直接退出。"""
+
+
 @dataclass
 class RunOptions:
     src: Path
@@ -77,7 +81,7 @@ class Stats:
 class Pipeline:
     def __init__(
         self, opts: RunOptions, db: DB, engine: Engine, provider: str, model: str,
-        log=print, should_stop=None,
+        log=print, should_stop=None, should_abort=None,
     ):
         self.opts = opts
         self.db = db
@@ -86,6 +90,7 @@ class Pipeline:
         self.model = model
         self.log = log
         self.should_stop = should_stop
+        self.should_abort = should_abort
         self.stats = Stats()
         self.jid = job_id_for(opts.src, opts.lang_from, opts.lang_to, provider, model)
         self.href_by_idx: dict[int, str] = {}
@@ -239,6 +244,7 @@ class Pipeline:
             done_count = 0
             chapter_started = time.time()
             for batch in _batches(todo, o.batch_size):
+                self._check_abort()
                 if o.window and not self._wait_for_window():
                     return
                 if self.should_stop and self.should_stop():
@@ -283,6 +289,7 @@ class Pipeline:
                     time.sleep(min(o.backoff_max, o.backoff_base * (2 ** breaker)))
                     continue
 
+                self._check_abort()
                 result_by_key = {r.key: r for r in results}
                 for row, ck in batch:
                     key = (cidx, row["block_idx"], row["seg_idx"])
@@ -353,6 +360,10 @@ class Pipeline:
             return text
         return None
 
+    def _check_abort(self) -> None:
+        if self.should_abort and self.should_abort():
+            raise JobAborted(f"job {self.jid} 被终止")
+
     def _wait_for_window(self) -> bool:
         """时间窗外就等。返回 False 表示等待期间被要求停止。"""
         from .runtime import in_window, seconds_until_window
@@ -361,6 +372,7 @@ class Pipeline:
             return True
         announced = False
         while not in_window(self.opts.window):
+            self._check_abort()
             if self.should_stop and self.should_stop():
                 return False
             wait = seconds_until_window(self.opts.window)
@@ -383,6 +395,7 @@ class Pipeline:
         attempt = 0
         last_error = "重试耗尽"
         while pending:
+            self._check_abort()
             if attempt >= o.max_retries:
                 break
             if attempt > 0:

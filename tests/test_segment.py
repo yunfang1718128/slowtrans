@@ -134,3 +134,23 @@ def test_verify_rejects_broken_epub(tmp_path):
         z.writestr("OEBPS/content.opf", "<package/>")
     problems = verify_epub(p)
     assert any("mimetype" in x for x in problems)
+
+
+def test_abort_raises_and_releases_lock(sample_epub, tmp_path):
+    """立即终止：抛 JobAborted，且任务锁必须释放（否则要等 15 分钟过期）。"""
+    import pytest
+
+    from slowtrans.db import DB
+    from slowtrans.engines.mock import MockEngine
+    from slowtrans.pipeline import JobAborted, Pipeline, RunOptions
+
+    db = DB(tmp_path / "db.sqlite")
+    opts = RunOptions(src=sample_epub, out=tmp_path / "o.epub", analyze=False, batch_size=2)
+    pipe = Pipeline(
+        opts, db, MockEngine(), "mock", "echo",
+        log=lambda *_: None, should_abort=lambda: True,
+    )
+    with pytest.raises(JobAborted):
+        pipe.run()
+    assert db.job_lock(pipe.jid) == ("", ""), "终止后锁必须释放"
+    db.close()

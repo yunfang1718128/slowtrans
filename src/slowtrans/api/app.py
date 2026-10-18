@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import threading
 import zipfile as _zipfile
 from contextlib import asynccontextmanager
@@ -27,12 +28,13 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from .. import notify
+from ..assembler import assemble as assemble_outputs
 from ..config import load_config, parse_engine_spec, validate_config
 from ..db import DB, job_id_for
 from ..engines.openai_compat import OpenAICompatEngine
 from ..library import cover_bytes, resolve_inside, scan_library
 from ..models import CATALOG, CUSTOM_PRESETS
-from ..pipeline import Pipeline
+from ..pipeline import JobAborted, Pipeline
 from ..runtime import engine_from_config, options_from_config
 from ..settings import load_settings, save_settings
 
@@ -87,6 +89,7 @@ class Runtime:
     data_dir: Path
     queue: asyncio.Queue
     stop_flags: dict[str, threading.Event]
+    abort_flags: dict[str, threading.Event]
     worker: asyncio.Task | None = None
     token: str = ""
 
@@ -98,6 +101,7 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         data_dir=Path(data_dir),
         queue=asyncio.Queue(),
         stop_flags={},
+        abort_flags={},
         token=os.environ.get("SLOWTRANS_TOKEN", ""),
     )
 
@@ -197,9 +201,13 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         except SystemExit as exc:
             raise HTTPException(400, str(exc))
 
-        out = Path(body.out_path) if body.out_path else src.with_name(
-            f"{src.stem}.{body.lang_to}.epub"
-        )
+        # 默认输出到服务自己的数据目录，不写回书库：
+        # systemd 里书库是只读的（ProtectSystem=strict），写那儿必然失败。
+        if body.out_path:
+            out = Path(body.out_path)
+        else:
+            out = rt.data_dir / "outputs" / f"{src.stem}.{body.lang_to}.epub"
+            out.parent.mkdir(parents=True, exist_ok=True)
         jid = job_id_for(src, body.lang_from, body.lang_to, provider, model)
         d.ensure_job(
             jid,
@@ -248,18 +256,41 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         flag = rt.stop_flags.get(jid)
         if flag:
             flag.clear()
+        abort = rt.abort_flags.get(jid)
+        if abort:
+            abort.clear()
         d.mark_queued(jid)
         await rt.queue.put(jid)
         return {"job_id": jid, "state": "queued", "model": row["model"]}
 
     @app.post("/api/v1/jobs/{jid}/cancel", dependencies=[Depends(auth)])
     async def cancel(jid: str, d: DB = Depends(get_db)) -> dict:
+        """立即终止：不等当前批次收尾，下一次检查点就抛 JobAborted。
+
+        注意 Python 线程无法被安全强杀：如果此刻正卡在一个 HTTP 请求上，
+        最坏要等它超时（默认 60 秒）。所以状态先给 cancelling，worker 退出后才算 cancelled。
+        """
         require_job(d, jid)
-        flag = rt.stop_flags.get(jid) or threading.Event()
+        # 只有本服务进程的 worker 持有锁时才可能"跑到一半"；
+        # 否则（僵尸任务、或 CLI 在另一台/另一个进程里跑）直接置为 cancelled，
+        # 免得状态永远停在 cancelling。
+        held, _ = d.job_lock(jid)
+        owner = f"{socket.gethostname()}:{os.getpid()}"
+        if not held.startswith(owner):
+            d.set_state(jid, "cancelled", "已终止（当时没有运行中的 worker）")
+            d.event(jid, "job.cancelled", {"reason": "not-running"})
+            notify.dispatch(d, jid, "job.cancelled", {"reason": "not-running"})
+            return {"job_id": jid, "state": "cancelled", "note": "没有运行中的任务，已直接标记为终止"}
+        flag = rt.abort_flags.setdefault(jid, threading.Event())
         flag.set()
-        rt.stop_flags[jid] = flag
-        d.set_state(jid, "cancelled")
-        return {"job_id": jid, "state": "cancelled"}
+        d.set_state(jid, "cancelling")
+        d.event(jid, "job.cancelling", {})
+        notify.dispatch(d, jid, "job.cancelling", {})
+        return {
+            "job_id": jid,
+            "state": "cancelling",
+            "note": "已请求终止；最坏等当前 HTTP 请求超时（约 60 秒），进度不会丢",
+        }
 
     # ------------------------------------------------------------ 术语表
     @app.get("/api/v1/jobs/{jid}/glossary", dependencies=[Depends(auth)])
@@ -417,6 +448,46 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         }
 
     # ------------------------------------------------------------ 预览 / 产物
+    @app.post("/api/v1/jobs/{jid}/build", dependencies=[Depends(auth)])
+    async def build_now(jid: str, d: DB = Depends(get_db)) -> dict:
+        """把"截至目前已译完的部分"组装成 epub。
+
+        存在的理由：任务跑到一半想先看看效果时，原来只能等整本跑完。
+        生成的文件会在文件名和响应头里标明 partial，不会被误当成完整版。
+        """
+        row = require_job(d, jid)
+        if not row["out_path"]:
+            raise HTTPException(400, "这个任务没有输出路径")
+        src, out = Path(row["src_path"]), Path(row["out_path"])
+        if not src.exists():
+            raise HTTPException(400, "源文件不存在")
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            res = assemble_outputs(
+                d, jid, src, out,
+                bilingual=bool(row["bilingual"] if row["bilingual"] is not None else True),
+                emit_mono=True,
+                allow_partial=True,
+                log=lambda *_: None,
+            )
+        except OSError as exc:
+            raise HTTPException(400, f"写不进输出目录：{exc}（检查 out_path 权限）")
+        if not res.bilingual_path:
+            raise HTTPException(400, "还没有可组装的章节（可能一段都没译完）")
+        if res.mono_path:
+            d.set_mono_path(jid, str(res.mono_path))
+        info = {
+            "job_id": jid,
+            "chapters": res.chapters,
+            "blocks": res.blocks,
+            "partial_blocks": res.skipped_blocks,
+            "partial": res.skipped_blocks > 0,
+            "out": str(res.bilingual_path),
+            "mono": str(res.mono_path) if res.mono_path else None,
+        }
+        d.event(jid, "job.built", info)
+        return info
+
     @app.get("/api/v1/jobs/{jid}/preview", dependencies=[Depends(auth)])
     async def preview_chapter(jid: str, chapter: int = 0, d: DB = Depends(get_db)):
         row = require_job(d, jid)
@@ -444,7 +515,20 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
             )
         if not p or not p.exists():
             raise HTTPException(404, "成品还没生成")
-        return FileResponse(p, filename=p.name, media_type="application/epub+zip")
+        info = _completeness(d.job(jid))
+        headers = {"X-Slowtrans-Partial": "0"}
+        filename = p.name
+        if info["partial"]:
+            # 文件名直接标注，避免用户以为拿到的是完整版
+            filename = f"{p.stem}.partial{p.suffix}"
+            headers = {
+                "X-Slowtrans-Partial": "1",
+                "X-Slowtrans-Pending-Segments": str(info["pending_segments"]),
+                "X-Slowtrans-Partial-Blocks": str(info["partial_blocks"]),
+            }
+        return FileResponse(
+            p, filename=filename, media_type="application/epub+zip", headers=headers
+        )
 
     # ------------------------------------------------------------ hooks / 能力
     @app.post("/api/v1/hooks", dependencies=[Depends(auth)])
@@ -470,6 +554,23 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
 
 
 # ---------------------------------------------------------------- 辅助
+def _completeness(r) -> dict:
+    """这次组装 / 下载到底是不是"完整的"。"""
+    total_seg = r["total_segments"] or 0
+    done_seg = r["done_segments"] or 0
+    pending = max(0, total_seg - done_seg)
+    total_blocks = r["total_blocks"] or 0
+    partial_blocks = r["partial_blocks"] or 0
+    partial = pending > 0 or partial_blocks > 0
+    return {
+        "partial": bool(partial),
+        "percent": round(100 * done_seg / total_seg) if total_seg else 0,
+        "pending_segments": pending,
+        "total_blocks": total_blocks,
+        "partial_blocks": partial_blocks,
+    }
+
+
 def _job_dict(r) -> dict:
     def art(path):
         p = Path(path) if path else None
@@ -495,6 +596,7 @@ def _job_dict(r) -> dict:
             "failed": r["failed_segments"],
         },
         "tokens": {"in": r["tokens_in"], "out": r["tokens_out"]},
+        "completeness": _completeness(r),
         "artifacts": {
             "bilingual": art(r["out_path"]),
             "mono": art(r["out_path_mono"]),
@@ -559,12 +661,19 @@ async def _worker(app: FastAPI) -> None:
         jid = await rt.queue.get()
         try:
             await asyncio.to_thread(_run_job, rt, jid)
+        except JobAborted:
+            with DB(rt.data_dir / "slowtrans.db") as d:
+                d.set_state(jid, "cancelled", "用户终止")
+                d.event(jid, "job.cancelled", {})
+                notify.dispatch(d, jid, "job.cancelled", {})
         except Exception as exc:  # 一个任务炸了不能带走整个服务
             with DB(rt.data_dir / "slowtrans.db") as d:
                 d.set_state(jid, "failed", str(exc)[:500])
                 d.event(jid, "job.failed", {"error": str(exc)[:300]})
                 notify.dispatch(d, jid, "job.failed", {"error": str(exc)[:300]})
         finally:
+            rt.abort_flags.pop(jid, None)
+            rt.stop_flags.pop(jid, None)
             rt.queue.task_done()
             try:
                 with DB(rt.data_dir / "slowtrans.db") as d:
@@ -583,6 +692,7 @@ def _run_job(rt: Runtime, jid: str) -> None:
         provider, model = row["provider"], row["model"]
         engine = engine_from_config(cfg, provider, model)
         stop = rt.stop_flags.setdefault(jid, threading.Event())
+        abort = rt.abort_flags.setdefault(jid, threading.Event())
         opts = options_from_config(
             cfg,
             src=Path(row["src_path"]),
@@ -594,4 +704,8 @@ def _run_job(rt: Runtime, jid: str) -> None:
             budget_cny=float(row["budget_cny"] or 0) or None,
             emit_mono=True,
         )
-        Pipeline(opts, d, engine, provider, model, should_stop=stop.is_set).run()
+        Pipeline(
+            opts, d, engine, provider, model,
+            should_stop=stop.is_set,
+            should_abort=abort.is_set,
+        ).run()

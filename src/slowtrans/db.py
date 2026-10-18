@@ -194,6 +194,8 @@ class DB:
             ("bilingual", "INTEGER NOT NULL DEFAULT 1"),
             ("locked_by", "TEXT"),
             ("locked_at", "TEXT"),
+            ("total_blocks", "INTEGER NOT NULL DEFAULT 0"),
+            ("partial_blocks", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {decl}")
@@ -217,11 +219,12 @@ class DB:
         "segmenting": {"analyzing", "translating", "failed", "cancelled", "paused"},
         "analyzing": {"translating", "failed", "cancelled", "paused", "awaiting_review"},
         "awaiting_review": {"translating", "cancelled", "paused"},
-        "translating": {"done", "failed", "cancelled", "paused", "verifying"},
+        "translating": {"done", "failed", "cancelled", "cancelling", "paused", "verifying"},
         "verifying": {"done", "failed", "paused"},
         "paused": {"queued", "translating", "segmenting", "failed", "cancelled", "done"},
         "done": {"queued", "done"},
         "failed": {"queued", "done", "cancelled"},
+        "cancelling": {"cancelled", "done", "failed"},
         "cancelled": {"queued", "cancelled"},
     }
 
@@ -557,6 +560,13 @@ class DB:
         return self.conn.execute(
             "SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?", (last_id, limit)
         ).fetchall()
+
+    def set_build_stats(self, jid: str, total_blocks: int, partial_blocks: int) -> None:
+        """记录这次组装有多少块因为没译完而被跳过。"""
+        self.conn.execute(
+            "UPDATE jobs SET total_blocks=?, partial_blocks=? WHERE id=?",
+            (total_blocks, partial_blocks, jid),
+        )
 
     def set_mono_path(self, jid: str, path: str) -> None:
         self.conn.execute("UPDATE jobs SET out_path_mono=? WHERE id=?", (path, jid))

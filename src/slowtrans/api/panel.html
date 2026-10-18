@@ -188,6 +188,10 @@
   .gate .box{width:min(420px,90vw);background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:22px;box-shadow:var(--shadow)}
   .gate h3{margin:0 0 6px;font-size:16px}
   .gate p{margin:0 0 16px;color:var(--dim);font-size:12.5px}
+  .warnbox{background:rgba(120,80,10,.18);border:1px solid #6b4a12;color:#ffd58a;border-radius:9px;
+    padding:8px 11px;font-size:12px;margin:-4px 0 10px;line-height:1.6}
+  .btn.warnbtn{border-color:#6b4a12;color:#ffd58a}
+  .btn.warnbtn:hover{border-color:#a9711e;background:#241a0c}
   .hidden{display:none!important}
   .empty{display:grid;place-items:center;gap:10px;padding:70px 0;color:var(--dim);text-align:center}
   .empty b{color:var(--fg);font-size:15px;font-weight:560}
@@ -332,7 +336,12 @@ views.jobs = () => {
 function stateName(s){
   return {created:'已创建',queued:'排队中',segmenting:'分段中',analyzing:'分析中',translating:'翻译中',
           verifying:'校验中',paused:'已暂停',done:'已完成',failed:'失败',cancelled:'已取消',
-          awaiting_review:'待确认'}[s] || s || '未知';
+          awaiting_review:'待确认', cancelling:'终止中', cancelled:'已终止'}[s] || s || '未知';
+}
+
+function partialTip(c){
+  if(!c || !c.partial) return '';
+  return `还没译完：${c.pending_segments} 段待译，约 ${c.partial_blocks} 个块会保留原文。下载的是部分版本。`;
 }
 
 function jobRow(j){
@@ -462,6 +471,8 @@ async function renderDetail(){
   const s = j.segments, p = pct(s);
   const canResume = ['paused','failed','cancelled','queued','created','awaiting_review'].includes(j.state);
   const canPause = ['translating','analyzing','segmenting'].includes(j.state);
+  const canAbort = ['translating','analyzing','segmenting','queued','cancelling'].includes(j.state);
+  const comp = j.completeness || {};
   const chapters = (j.chapters||[]).map(c=>`<tr>
       <td style="width:44px;color:var(--dim)">${c.idx+1}</td>
       <td>${esc(c.title||c.href)}</td>
@@ -477,6 +488,7 @@ async function renderDetail(){
       <div style="color:var(--dim);font-size:12px;margin-bottom:10px">
         ${esc(j.engine)} · ${esc(j.lang_from)} → ${esc(j.lang_to)} · ${stateName(j.state)}
       </div>
+      ${comp.partial?`<div class="warnbox">⚠ 这次组装/下载是<b>部分译文</b>：${comp.pending_segments} 段待译，约 ${comp.partial_blocks} 个段落块保留英文原文。译完后重新组装才是完整版。</div>`:''}
       <div class="kv">
         <div><span>已完成</span><b>${s.done} / ${s.total}</b></div>
         <div><span>待复核</span><b style="color:${s.review?'var(--warn)':'inherit'}">${s.review}</b></div>
@@ -487,10 +499,12 @@ async function renderDetail(){
     <div style="display:flex;flex-direction:column;gap:8px">
       ${canPause?`<button class="btn" data-act="pause">暂停</button>`:''}
       ${canResume?`<button class="btn primary" data-act="resume">继续</button>`:''}
-      <button class="btn" data-act="download" data-variant="bilingual"
-        ${s.done>=s.total?'':'title="还没全部译完，下载的是当前已译部分"'}>双语 EPUB</button>
-      <button class="btn" data-act="download" data-variant="mono"
-        ${j.artifacts?.mono?.exists?'':'disabled title="这个任务还没有纯译文版"'}>纯中文 EPUB</button>
+      ${canAbort?`<button class="btn danger" data-act="abort">终止</button>`:''}
+      ${s.done>0?`<button class="btn" data-act="build" title="把目前已译完的部分组装成 epub">生成当前成品</button>`:''}
+      <button class="btn ${comp.partial?'warnbtn':''}" data-act="download" data-variant="bilingual"
+        ${comp.partial?`title="${esc(partialTip(comp))}"`:''}>双语 EPUB${comp.partial?` · 部分 ${comp.percent}%`:''}</button>
+      <button class="btn ${comp.partial?'warnbtn':''}" data-act="download" data-variant="mono"
+        ${j.artifacts?.mono?.exists?`title="${esc(partialTip(comp))}"`:'disabled title="这个任务还没有纯译文版"'}>纯中文 EPUB${comp.partial?' · 部分':''}</button>
     </div>
   </div></div>
 
@@ -629,6 +643,7 @@ async function downloadArtifact(id, fallbackName, variant){
     try { const j = await r.json(); msg = j.detail || j.message || msg; } catch {}
     throw new Error(msg);
   }
+  const isPartial = r.headers.get('x-slowtrans-partial') === '1';
   const blob = await r.blob();
   const cd = r.headers.get('content-disposition') || '';
   let name = fallbackName || 'book.epub';
@@ -638,17 +653,35 @@ async function downloadArtifact(id, fallbackName, variant){
   const a = document.createElement('a');
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  return isPartial;
 }
 
 async function jobAction(act, variant){
   const id = state.sel; if(!id) return;
   try{
+    if(act==='abort'){
+      if(!confirm('立即终止这个任务？\n\n已译好的段落会保留，之后可以点「继续」接着跑。')) return;
+      await api(`/api/v1/jobs/${id}/cancel`, {method:'POST'});
+      toast('已请求终止，正在等当前请求收尾（最长约 60 秒）','ok');
+      await loadJobs(); await renderDetail();
+      return;
+    }
     if(act==='download'){
-      const j = state.jobs.find(x=>x.job_id===id);
+      let full = null;
+      try { full = await api('/api/v1/jobs/'+id); } catch {}
+      const c = full?.completeness || {};
+      if(c.partial){
+        const ok = confirm(`这本书还没译完：${c.pending_segments} 段待译，约 ${c.partial_blocks} 个段落块会保留英文原文。\n\n仍然下载这个「部分版本」吗？`);
+        if(!ok) return;
+      }
+      const j = state.jobs.find(x=>x.job_id===id) || full;
       const base = (j?.src_path || 'book.epub').split(/[\/]/).pop().replace(/\.epub$/i,'');
       const suffix = variant === 'mono' ? '.zh.mono.epub' : '.zh.epub';
-      await downloadArtifact(id, base + suffix, variant);
-      toast('已开始下载' + (variant === 'mono' ? '（纯中文）' : '（双语）'),'ok');
+      const partial = await downloadArtifact(id, base + suffix, variant);
+      toast(partial
+        ? '已开始下载（部分译文：未译完的段落保留原文）'
+        : '已开始下载' + (variant === 'mono' ? '（纯中文）' : '（双语）'),
+        partial ? '' : 'ok');
       return;
     }
     await api(`/api/v1/jobs/${id}/${act}`, {method:'POST'});
@@ -673,7 +706,16 @@ document.addEventListener('click', async ev => {
   else if(act==='openbook'){ await openBook(t.dataset.rel); }
   else if(act==='startbook'){ ev.stopPropagation(); await startBook(t.dataset.rel); }
   else if(act==='seljob'){ state.sel = t.dataset.id; render(); }
-  else if(act==='pause'||act==='resume'){ await jobAction(act); }
+  else if(act==='pause'||act==='resume'||act==='abort'){ await jobAction(act); }
+  else if(act==='build'){
+    try{
+      const r = await api(`/api/v1/jobs/${state.sel}/build`, {method:'POST'});
+      toast(r.partial
+        ? `已生成当前成品：${r.chapters} 章 / ${r.blocks} 块（${r.partial_blocks} 个块未译完，保留原文）`
+        : `已生成完整成品：${r.chapters} 章 / ${r.blocks} 块`, r.partial?'':'ok');
+      await renderDetail();
+    }catch(e){ toast('生成失败：'+e.message,'bad'); }
+  }
   else if(act==='download'){ await jobAction('download', t.dataset.variant); }
   else if(act==='preview'){ await previewChapter(+t.dataset.ch); }
   else if(act==='closepreview'){ $('#prevcard').classList.add('hidden'); }

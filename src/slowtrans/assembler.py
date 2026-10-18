@@ -42,6 +42,7 @@ def assemble(
     log=print,
 ) -> AssembleResult:
     idx_by_href = db.chapter_idx_by_href(jid)
+    total_blocks = 0
     if not idx_by_href:
         log("没有任何可组装的章节")
         return AssembleResult()
@@ -51,7 +52,9 @@ def assemble(
         cidx = idx_by_href.get(href)
         if cidx is None:
             return None
+        nonlocal total_blocks
         expect, done = db.chapter_done_blocks(jid, cidx)
+        total_blocks += len(expect)
         plan = ChapterPlan()
         for bidx, total in expect.items():
             segs = done.get(bidx, [])
@@ -90,6 +93,8 @@ def assemble(
         )
         result.mono_path = mono
         result.problems.extend(mono_report.problems)
+
+    db.set_build_stats(jid, total_blocks, result.skipped_blocks)
 
     if result.problems:
         log("  ! 自检问题：" + "；".join(result.problems))
