@@ -85,3 +85,9 @@ systemctl show slowtrans -p MemoryCurrent
 5. **纯图片块会产生大量"空译文"复核**：摊平后没有文字的分段直接不入库。
 6. **`INSERT OR REPLACE` 会把 `seg_done` 清零**：改 UPSERT 并只更新元数据。
 7. **`--limit` 截断过的章续跑会缺尾段**：`INSERT OR IGNORE` 是幂等的，每章都该重扫。
+8. **`<span>` 包着的标题整段漏译**：早期把 span/em/strong 全部当占位符保留，
+   结果 `<h1><span class="chaptertitle">Title</span></h1>` 的文字从没进翻译队列，
+   纯中文版开头还是英文。修正后内容型内联元素展开取文本，只有空锚点/图片/上标保留。
+   代价：已有任务有 1033 段模板变化被重置重译（一次性）。
+9. **分段规则改了但老段不更新**：主键是 (章,块,段)，`INSERT OR IGNORE` 会静默跳过，
+   修正永远不生效。现在显式比对 `src_text`，变了就重置成 pending。
