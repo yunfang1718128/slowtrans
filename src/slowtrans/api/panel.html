@@ -252,7 +252,7 @@ const timeago = ts => { if(!ts) return ''; const d=(Date.now()-new Date(ts).getT
   if(d<60) return '刚刚'; if(d<3600) return Math.round(d/60)+' 分钟前'; if(d<86400) return Math.round(d/3600)+' 小时前'; return Math.round(d/86400)+' 天前'; };
 
 const coverCache = new Map();
-const state = { view:'library', library:null, jobs:[], sel:null, settings:null, preview:null, loading:{} };
+const state = { health:null, view:'library', library:null, jobs:[], sel:null, settings:null, preview:null, loading:{} };
 let eventSeq = 0, esConn = null;
 
 /* ---------------- 网络 ---------------- */
@@ -320,13 +320,20 @@ function bookCard(b){
 
 views.jobs = () => {
   const jobs = state.jobs;
+  const serverJobs = Object.values(state.health?.jobs || {}).reduce((a,b)=>a+b, 0);
   return `
     <div class="head">
       <div><h1>任务</h1><p>${jobs.length ? jobs.length + ' 个任务' : '还没有任务'}</p></div>
       <div class="sp"></div>
       <button class="btn" data-act="loadjobs">刷新</button>
     </div>
-    ${!jobs.length ? `<div class="empty"><b>还没有翻译任务</b><span>去「书库」挑一本书开始</span></div>` : `
+    ${!jobs.length ? (serverJobs > 0
+      ? `<div class="empty">
+           <b>列表是空的，但服务器上确实有 ${serverJobs} 个任务</b>
+           <span>基本可以确定是令牌不对。列表接口返回了 401，前端把它显示成了空列表。</span>
+           <button class="btn primary" data-act="relogin">重新填写令牌</button>
+         </div>`
+      : `<div class="empty"><b>还没有翻译任务</b><span>去「书库」挑一本书开始</span></div>`) : `
     <div class="split">
       <div class="list">${jobs.map(jobRow).join('')}</div>
       <div id="jdetail">${state.sel ? '' : `<div class="empty"><b>选一个任务</b><span>看进度、章节、日志和成品</span></div>`}</div>
@@ -600,6 +607,7 @@ async function loadCovers(){
 async function loadHealth(){
   try{
     const h = await api('/api/v1/health');
+    state.health = h;
     $('#live').classList.add('ok');
     $('#livetext').textContent = 'v'+h.version;
     const q = Object.entries(h.jobs||{}).map(([k,v])=>`${stateName(k)} ${v}`).join(' · ');
