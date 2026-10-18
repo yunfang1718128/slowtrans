@@ -61,17 +61,29 @@ def test_detach_affixes_roundtrip():
     assert "Thanks" in core
 
 
-def test_render_block_restores_inline_elements(sample_epub):
+def test_inline_container_text_is_translated(sample_epub):
+    """<em> 里的文字必须进入模板，否则标题这类被 span 包住的文本会整段漏译。"""
+    _, cs = segment_chapter(_chapter_data(sample_epub), "OEBPS/ch1.xhtml")
+    seg = next(s for s in cs.segments if "He said" in s.template)
+    assert "nothing" in seg.template
+    assert "nothing" not in "".join("{{%d}}" % i for i in range(9))
+
+
+def test_render_block_restores_atomic_elements(sample_epub):
     from lxml import etree
 
     data = _chapter_data(sample_epub)
     root, cs = segment_chapter(data, "OEBPS/ch1.xhtml")
     blocks = collect_blocks(root)
     idx = next(s.block_idx for s in cs.segments if "He said" in s.template)
-    out = render_block(blocks[idx], ["他说 {{0}} 什么也没说，然后离开了。"], strip_ruby=True)
+    seg = next(s for s in cs.segments if "He said" in s.template)
+    # 空 span（分页锚点）应当保留为占位符
+    assert "{{0}}" in seg.template
+    out = render_block(blocks[idx], ["他说什么也没说，然后离开了。{{0}}结尾稍后到来。"], strip_ruby=True)
     assert len(out) == 1
     html = etree.tostring(out[0], encoding="unicode")
-    assert "<em" in html and "nothing" in html
+    assert 'id="pg1"' in html, "锚点必须还原"
+    assert "他说什么也没说" in html
 
 
 def test_full_pipeline_mock(sample_epub, tmp_path):

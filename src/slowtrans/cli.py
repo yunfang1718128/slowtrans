@@ -81,6 +81,7 @@ def cmd_run(args) -> int:
         lang_from=args.src_lang,
         lang_to=args.to,
         bilingual=not args.mono,
+        emit_mono=not args.no_mono,
         max_segment_chars=args.max_chars,
         batch_size=args.batch,
         limit_segments=args.limit,
@@ -184,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--limit", type=int, default=0, help="只入库前 N 段（调试用）")
     r.add_argument("--max-chars", type=int, default=1200)
     r.add_argument("--mono", action="store_true", help="只输出译文（默认双语对照）")
+    r.add_argument("--no-mono", action="store_true", help="双语模式下不额外产出纯译文版")
     r.add_argument("--no-analyze", action="store_true", help="跳过术语/风格分析")
     r.add_argument("--dry-run", action="store_true", help="只分段不调用 API")
     r.add_argument("--temperature", type=float, default=0.3)

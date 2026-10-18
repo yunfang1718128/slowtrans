@@ -25,12 +25,20 @@ BLOCK_TAGS = {
     "pre", "address", "center",
 }
 
-# 这些保留成占位符，原样插回译文
-INLINE_KEEP = {
-    "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "del", "dfn",
-    "em", "i", "img", "ins", "kbd", "mark", "q", "s", "samp", "small", "span",
-    "strong", "sub", "sup", "time", "u", "var", "wbr", "svg", "math",
+# 原子元素：没有可译文字，整块原样插回译文
+INLINE_ATOMIC = {"img", "br", "hr", "wbr", "svg", "math", "sup", "sub"}
+
+# 容器型内联元素：里面的文字必须翻译（否则标题会整段漏译），元素本身不保留。
+# 早期版本把这些整体当占位符，结果 <h1><span>Title</span></h1> 的标题
+# 完全没进翻译队列——纯中文版开头还是英文。
+INLINE_RECURSE = {
+    "a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "del", "dfn",
+    "em", "i", "ins", "kbd", "mark", "q", "s", "samp", "small", "span",
+    "strong", "time", "u", "var",
 }
+
+# 只有纯数字/符号的链接（脚注标记）保留元素，保住跳转
+_FOOTNOTE_MARK = re.compile(r"^[\[\]()0-9*†‡§¶\s.\-]{1,8}$")
 
 PH_RE = re.compile(r"\{\{\s*(\d+)\s*\}\}")
 # 只要还有真正的字母/汉字/假名就值得翻；只剩标点、数字、页码的索引条目跳过。
@@ -106,14 +114,30 @@ def flatten_block(el: etree._Element, strip_ruby: bool = True) -> tuple[str, lis
         if text:
             out.append(text)
 
+    def keep(node: etree._Element) -> None:
+        out.append("{{%d}}" % len(phs))
+        phs.append(node)
+
     def emit_node(node: etree._Element):
         name = local(node.tag)
         if name == "ruby" and strip_ruby:
             emit_text(_ruby_base(node))
             return
-        if name in INLINE_KEEP:
-            out.append("{{%d}}" % len(phs))
-            phs.append(node)
+        if name in INLINE_ATOMIC:
+            keep(node)
+            return
+        if name in INLINE_RECURSE:
+            inner = "".join(node.itertext())
+            if not inner.strip():
+                keep(node)          # 空锚点 <span id="page_1"/>
+                return
+            if name == "a" and _FOOTNOTE_MARK.match(inner.strip()):
+                keep(node)          # [1] / * / † 这类脚注标记，保住链接
+                return
+            emit_text(node.text)
+            for child in node:
+                emit_node(child)
+                emit_text(child.tail)
             return
         # 未知标签：继续往里走，别丢文字
         emit_text(node.text)
@@ -134,6 +158,14 @@ def _safe_cut(tpl: str, pos: int) -> int:
         if m.start() < pos < m.end():
             return m.start()
     return pos
+
+
+def normalize_template(tpl: str) -> str:
+    """把排版换行/缩进折叠成单空格。
+
+    否则 XHTML 里的缩进会原样进 prompt，模型有时会把它当格式指令。
+    """
+    return re.sub(r"[ \t\r\n]+", " ", tpl).strip()
 
 
 def _sentences(tpl: str) -> list[str]:
@@ -189,9 +221,11 @@ def segment_chapter(
             continue
         # 只有占位符、没有可译文字的块（图片、纯锚点）不入库：
         # 既不浪费 API 调用，也不会制造一堆"空译文"复核。
+        tpl = normalize_template(tpl)
         if not WORD_RE.search(PH_RE.sub("", tpl)):
             continue
         for si, chunk in enumerate(split_template(tpl, max_chars)):
+            chunk = normalize_template(chunk)
             if not WORD_RE.search(PH_RE.sub("", chunk)):
                 continue
             ids = {int(m.group(1)) for m in PH_RE.finditer(chunk)}

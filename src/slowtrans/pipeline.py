@@ -42,6 +42,7 @@ class RunOptions:
     price_in: float = 0.0     # 元 / 百万 token；免费模型填 0
     price_out: float = 0.0
     allow_partial: bool = True
+    emit_mono: bool = True     # 双语模式时额外产出一份纯译文
     dry_run: bool = False
     log_every: int = 1
 
@@ -94,7 +95,7 @@ class Pipeline:
             model=self.model,
         )
         self.db.set_state(self.jid, "segmenting")
-        inserted = 0
+        inserted = changed = 0
         with zipfile.ZipFile(o.src) as z:
             pkg = read_package(z)
             for idx, item in spine_items(pkg):
@@ -130,10 +131,15 @@ class Pipeline:
                     if room <= 0:
                         break
                     segs = segs[:room]
-                inserted += self.db.insert_segments(self.jid, segs)
+                add, chg = self.db.insert_segments(self.jid, segs)
+                inserted += add
+                changed += chg
         self.db.refresh_stats(self.jid)
         self.stats.segments_total = self.db.job(self.jid)["total_segments"]
-        self.log(f"分段完成：{self.stats.chapters} 章，{self.stats.segments_total} 段（新入库 {inserted}）")
+        note = f"新入库 {inserted}"
+        if changed:
+            note += f"，分段规则变化重置 {changed}"
+        self.log(f"分段完成：{self.stats.chapters} 章，{self.stats.segments_total} 段（{note}）")
 
     # ---------------- 2. 分析：术语 + 风格卡 ----------------
     def analyze(self) -> None:
@@ -446,16 +452,27 @@ class Pipeline:
             plans,
             bilingual=self.opts.bilingual,
         )
+        mono_path = None
+        if self.opts.bilingual and self.opts.emit_mono:
+            mono_path = self.opts.out.with_name(
+                f"{self.opts.out.stem}.mono{self.opts.out.suffix}"
+            )
+            mono_rep = write_epub(self.opts.src, mono_path, plans, bilingual=False)
+            self.db.set_mono_path(self.jid, str(mono_path))
+            report.problems.extend(mono_rep.problems)
         self.db.set_state(self.jid, "done")
         self.db.event(
             self.jid, "job.completed",
             {"chapters": report.chapters_written, "blocks": report.blocks_replaced,
-             "bytes": report.bytes_out, "out": str(self.opts.out)},
+             "bytes": report.bytes_out, "out": str(self.opts.out),
+             "mono_out": str(mono_path) if mono_path else None},
         )
         self.log(
-            f"成品：{self.opts.out}（{report.chapters_written} 章，"
+            f"成品（双语）：{self.opts.out}（{report.chapters_written} 章，"
             f"{report.blocks_replaced} 块，{report.bytes_out/1024/1024:.2f} MB，自检通过）"
         )
+        if mono_path:
+            self.log(f"成品（纯译文）：{mono_path}（{mono_path.stat().st_size/1024/1024:.2f} MB）")
         return report
 
     # ---------------- 总控 ----------------

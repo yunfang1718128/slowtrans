@@ -487,7 +487,10 @@ async function renderDetail(){
     <div style="display:flex;flex-direction:column;gap:8px">
       ${canPause?`<button class="btn" data-act="pause">暂停</button>`:''}
       ${canResume?`<button class="btn primary" data-act="resume">继续</button>`:''}
-      <button class="btn" data-act="download">下载成品</button>
+      <button class="btn" data-act="download" data-variant="bilingual"
+        ${s.done>=s.total?'':'title="还没全部译完，下载的是当前已译部分"'}>双语 EPUB</button>
+      <button class="btn" data-act="download" data-variant="mono"
+        ${j.artifacts?.mono?.exists?'':'disabled title="这个任务还没有纯译文版"'}>纯中文 EPUB</button>
     </div>
   </div></div>
 
@@ -617,10 +620,37 @@ async function startBook(rel){
   }catch(e){ toast('提交失败：'+e.message,'bad'); }
 }
 
-async function jobAction(act){
+async function downloadArtifact(id, fallbackName, variant){
+  const q = variant ? ('?variant=' + encodeURIComponent(variant)) : '';
+  const r = await fetch('/api/v1/artifacts/'+id+q, {headers: headers(false)});
+  if(r.status === 401){ showGate(); throw new Error('未授权'); }
+  if(!r.ok){
+    let msg = '下载失败 ' + r.status;
+    try { const j = await r.json(); msg = j.detail || j.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  const blob = await r.blob();
+  const cd = r.headers.get('content-disposition') || '';
+  let name = fallbackName || 'book.epub';
+  const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  if(m){ try{ name = decodeURIComponent(m[1]); }catch{ name = m[1]; } }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
+}
+
+async function jobAction(act, variant){
   const id = state.sel; if(!id) return;
   try{
-    if(act==='download'){ window.open('/api/v1/artifacts/'+id, '_blank'); return; }
+    if(act==='download'){
+      const j = state.jobs.find(x=>x.job_id===id);
+      const base = (j?.src_path || 'book.epub').split(/[\/]/).pop().replace(/\.epub$/i,'');
+      const suffix = variant === 'mono' ? '.zh.mono.epub' : '.zh.epub';
+      await downloadArtifact(id, base + suffix, variant);
+      toast('已开始下载' + (variant === 'mono' ? '（纯中文）' : '（双语）'),'ok');
+      return;
+    }
     await api(`/api/v1/jobs/${id}/${act}`, {method:'POST'});
     toast(act==='pause'?'已暂停（当前批次结束后生效）':'已重新排队','ok');
     await loadJobs(); await renderDetail();
@@ -644,7 +674,7 @@ document.addEventListener('click', async ev => {
   else if(act==='startbook'){ ev.stopPropagation(); await startBook(t.dataset.rel); }
   else if(act==='seljob'){ state.sel = t.dataset.id; render(); }
   else if(act==='pause'||act==='resume'){ await jobAction(act); }
-  else if(act==='download'){ await jobAction('download'); }
+  else if(act==='download'){ await jobAction('download', t.dataset.variant); }
   else if(act==='preview'){ await previewChapter(+t.dataset.ch); }
   else if(act==='closepreview'){ $('#prevcard').classList.add('hidden'); }
   else if(act==='showcustom'){ $('#customForm').classList.remove('hidden'); }

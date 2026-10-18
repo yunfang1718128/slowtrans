@@ -111,9 +111,11 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
 
     # ---------- 基础 ----------
     @app.get("/", response_class=HTMLResponse)
-    async def panel() -> str:
+    async def panel() -> HTMLResponse:
         p = Path(__file__).with_name("panel.html")
-        return p.read_text(encoding="utf-8") if p.exists() else "<h1>panel.html missing</h1>"
+        html = p.read_text(encoding="utf-8") if p.exists() else "<h1>panel.html missing</h1>"
+        # 前端是单文件、改了就生效，让浏览器别拿旧缓存
+        return HTMLResponse(html, headers={"Cache-Control": "no-store, must-revalidate"})
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, Any]:
@@ -427,10 +429,15 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
         return Response(content=data, media_type="application/xhtml+xml")
 
     @app.get("/api/v1/artifacts/{jid}", dependencies=[Depends(auth)])
-    async def artifact(jid: str):
+    async def artifact(jid: str, variant: str = "bilingual"):
         d = db()
-        row = d.job(jid)
-        p = Path(row["out_path"]) if row["out_path"] else None
+        d.job(jid)
+        p = d.artifact_path(jid, variant)
+        if variant == "mono" and (not p or not p.exists()):
+            raise HTTPException(
+                404,
+                "这个任务还没有纯译文版。双语任务重新组装一次就会同时产出 mono 版。",
+            )
         if not p or not p.exists():
             raise HTTPException(404, "成品还没生成")
         return FileResponse(p, filename=p.name, media_type="application/epub+zip")
@@ -462,6 +469,13 @@ def create_app(config_path: str | None = None, data_dir: str = "data") -> FastAP
 
 
 def _job_dict(r) -> dict:
+    from pathlib import Path as _P
+
+    def art(path):
+        p = _P(path) if path else None
+        return {"path": str(p) if p else None, "exists": bool(p and p.exists()),
+                "size": p.stat().st_size if p and p.exists() else 0}
+
     return {
         "job_id": r["id"],
         "state": r["state"],
@@ -477,6 +491,10 @@ def _job_dict(r) -> dict:
             "failed": r["failed_segments"],
         },
         "tokens": {"in": r["tokens_in"], "out": r["tokens_out"]},
+        "artifacts": {
+            "bilingual": art(r["out_path"]),
+            "mono": art(r["out_path_mono"]),
+        },
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
         "error": r["error"],

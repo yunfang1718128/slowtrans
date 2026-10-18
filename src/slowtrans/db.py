@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS jobs(
   id TEXT PRIMARY KEY,
   src_path TEXT NOT NULL,
   out_path TEXT,
+  out_path_mono TEXT,
   lang_from TEXT NOT NULL,
   lang_to TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -143,6 +144,13 @@ class DB:
         self.conn = sqlite3.connect(self.path, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """老库平滑升级：SQLite 没有 IF NOT EXISTS 加列，只能先查。"""
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(jobs)")}
+        if "out_path_mono" not in cols:
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN out_path_mono TEXT")
 
     # ---------- job ----------
     def ensure_job(self, jid: str, **kw) -> None:
@@ -196,19 +204,39 @@ class DB:
         ).fetchone()
         return row is not None
 
-    def insert_segments(self, jid: str, segs: Iterable[Segment]) -> int:
-        n = 0
+    def insert_segments(self, jid: str, segs: Iterable[Segment]) -> tuple[int, int]:
+        """返回 (新增, 因分段规则变化而重置)。
+
+        分段规则改进后，老任务的 src_text 会变。主键 INSERT OR IGNORE 不会更新它，
+        结果就是"标题永远漏译"。这里显式比对模板，变了就重置成 pending 重译。
+        """
+        added = changed = 0
         self.conn.execute("BEGIN")
         for s in segs:
-            cur = self.conn.execute(
-                "INSERT OR IGNORE INTO segments(job_id,chapter_idx,block_idx,seg_idx,"
-                "src_hash,src_text,ph_count,state) VALUES(?,?,?,?,?,?,?,'pending')",
-                (jid, s.chapter_idx, s.block_idx, s.seg_idx, text_hash(s.src_text),
-                 s.src_text, s.ph_count),
-            )
-            n += cur.rowcount
+            row = self.conn.execute(
+                "SELECT src_text FROM segments WHERE job_id=? AND chapter_idx=?"
+                " AND block_idx=? AND seg_idx=?",
+                (jid, s.chapter_idx, s.block_idx, s.seg_idx),
+            ).fetchone()
+            if row is None:
+                self.conn.execute(
+                    "INSERT INTO segments(job_id,chapter_idx,block_idx,seg_idx,"
+                    "src_hash,src_text,ph_count,state) VALUES(?,?,?,?,?,?,?,'pending')",
+                    (jid, s.chapter_idx, s.block_idx, s.seg_idx, text_hash(s.src_text),
+                     s.src_text, s.ph_count),
+                )
+                added += 1
+            elif row["src_text"] != s.src_text:
+                self.conn.execute(
+                    "UPDATE segments SET src_text=?, src_hash=?, ph_count=?, state='pending',"
+                    " dst_text=NULL, error=NULL, attempts=0 WHERE job_id=? AND chapter_idx=?"
+                    " AND block_idx=? AND seg_idx=?",
+                    (s.src_text, text_hash(s.src_text), s.ph_count, jid, s.chapter_idx,
+                     s.block_idx, s.seg_idx),
+                )
+                changed += 1
         self.conn.execute("COMMIT")
-        return n
+        return added, changed
 
     def pending_segments(self, jid: str, chapter_idx: int) -> list[sqlite3.Row]:
         return self.conn.execute(
@@ -332,6 +360,14 @@ class DB:
             "SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?", (last_id, limit)
         ).fetchall()
 
-    def artifact_path(self, jid: str) -> Path | None:
-        row = self.conn.execute("SELECT out_path FROM jobs WHERE id=?", (jid,)).fetchone()
-        return Path(row["out_path"]) if row and row["out_path"] else None
+    def set_mono_path(self, jid: str, path: str) -> None:
+        self.conn.execute("UPDATE jobs SET out_path_mono=? WHERE id=?", (path, jid))
+
+    def artifact_path(self, jid: str, variant: str = "bilingual") -> Path | None:
+        row = self.conn.execute(
+            "SELECT out_path, out_path_mono FROM jobs WHERE id=?", (jid,)
+        ).fetchone()
+        if not row:
+            return None
+        p = row["out_path_mono"] if variant == "mono" else row["out_path"]
+        return Path(p) if p else None
